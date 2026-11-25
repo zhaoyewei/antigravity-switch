@@ -6,7 +6,7 @@
 
 set -euo pipefail
 
-OWNER="${GITHUB_OWNER:-yvws}"
+OWNER="${GITHUB_OWNER:-zhaoyewei}"
 REPO="antigravity-switch"
 BRANCH="${GITHUB_BRANCH:-main}"
 BASE="https://raw.githubusercontent.com/$OWNER/$REPO/$BRANCH"

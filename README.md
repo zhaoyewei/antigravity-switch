@@ -8,13 +8,13 @@
 **一键安装**（macOS / Linux，以及 Windows 上的 Git Bash）：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/yvws/antigravity-switch/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/zhaoyewei/antigravity-switch/main/install.sh | bash
 ```
 
 安装到 `~/.agys/bin/` 并自动处理 PATH。也可以 clone 本仓库后离线安装：
 
 ```bash
-git clone https://github.com/yvws/antigravity-switch.git
+git clone https://github.com/zhaoyewei/antigravity-switch.git
 cd antigravity-switch && bash install.sh
 ```
 
