@@ -83,6 +83,30 @@ cd tests && bash run_tests.sh   # 沙箱测试（不触碰真实凭据）
 高级 / 测试用环境变量：`AGYS_HOME`、`AGYS_GEMINI_HOME`、`AGYS_CRED_TARGET`、
 `AGYS_CRED_USER`、`AGYS_AGY_BIN`、`AGYS_PROCESS_NAMES`。
 
+## 推送 / 认证排障
+
+**现象**：`git push` 时要 `Username for 'https://github.com'`，输入密码后报
+`Invalid username or token. Password authentication is not supported for Git operations.`
+
+**原因**：remote 是 HTTPS，而 SSH 公钥只对 `git@github.com:...` 形式的连接生效；
+GitHub 自 2021 年起禁止 HTTPS 账号密码认证，只接受 PAT / OAuth。WSL 里的 git
+通常没配 credential helper，所以会直接弹密码框，填账号密码必然被拒。
+
+**解决（已配好 SSH 公钥）**：把 remote 切成 SSH 再推：
+
+```bash
+git remote set-url origin git@github.com:zhaoyewei/antigravity-switch.git
+ssh -T git@github.com            # 应返回 Hi <用户名>! You've successfully authenticated
+git push -u origin main
+```
+
+`ssh -T` 返回的用户名必须是有该仓库权限的账号；公钥若加到了另一个 GitHub
+账号，会报 `Permission denied (publickey)`。
+
+**备选（没有 SSH key）**：在 GitHub Settings → Developer settings → Personal
+access tokens 生成带 `repo` 权限的 PAT；HTTPS 推送时用户名填 GitHub 用户名、
+密码填 PAT（不是账号密码）。Windows 侧也可用 Git Credential Manager 弹浏览器授权。
+
 ## License
 
 MIT
