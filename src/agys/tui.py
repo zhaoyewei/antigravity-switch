@@ -15,10 +15,21 @@ import sys
 
 
 def supported() -> bool:
+    """stdin 与 stdout 都是终端才算「能交互」。
+
+    只检查 stdin 是不够的：Windows 上把 stdin 重定向到 NUL 时，NUL 是字符
+    设备，`isatty()` 会返回 True，但读不到任何按键。加上 stdout 判定可以
+    同时排除 `$(agys ...)` 这类管道捕获的场景。
+    """
     try:
         return sys.stdin.isatty() and sys.stdout.isatty()
     except (AttributeError, ValueError):
         return False
+
+
+def interactive() -> bool:
+    """是否处在一个用户真的能看、能按的终端里（决定要不要交出终端）。"""
+    return supported()
 
 
 class _Keys:

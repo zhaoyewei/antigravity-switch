@@ -6,7 +6,6 @@ import json
 import locale
 import os
 import subprocess
-import sys
 from dataclasses import dataclass, asdict
 
 from . import proxy

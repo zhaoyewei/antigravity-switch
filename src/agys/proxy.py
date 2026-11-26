@@ -135,14 +135,23 @@ def is_socks(url) -> bool:
     return (url or "").lower().startswith(("socks5://", "socks5h://", "socks4://"))
 
 
-def urlopen(url, timeout=15):
-    """带代理的 urlopen；urllib 不支持 socks，遇到 socks 退回直连。"""
+def open_request(req, timeout=15):
+    """带代理发送任意请求（req 可以是 urllib.request.Request）。
+
+    `urlopen` 只够 GET 用；探测额度需要 POST，所以留这个通用入口，
+    保证所有出站请求走同一套代理规则。
+    """
     p = current()
     if p and not is_socks(p):
         opener = urllib.request.build_opener(
             urllib.request.ProxyHandler({"http": p, "https": p}))
-        return opener.open(url, timeout=timeout)
-    return urllib.request.urlopen(url, timeout=timeout)
+        return opener.open(req, timeout=timeout)
+    return urllib.request.urlopen(req, timeout=timeout)
+
+
+def urlopen(url, timeout=15):
+    """带代理的 GET；urllib 不支持 socks，遇到 socks 退回直连。"""
+    return open_request(url, timeout=timeout)
 
 
 def test(url=None, timeout=5):

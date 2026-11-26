@@ -2,6 +2,7 @@
 
 ```
 agys [--json] <命令> [参数...]
+agys [--json] [--status|--dry-run|--offline|--no-launch] ['--' agy 参数...]   # = agys auto
 ```
 
 全局参数：
@@ -12,7 +13,7 @@ agys [--json] <命令> [参数...]
 | `--version` | 打印版本并退出 |
 | `-h` / `--help` | 帮助（也可 `agys <命令> --help`） |
 
-内置离线帮助：`agys help [commands|workflows|troubleshooting|env|security]`。
+内置离线帮助：`agys help [commands|workflows|troubleshooting|env|security|auto]`。
 
 ---
 
@@ -33,6 +34,41 @@ agys [--json] <命令> [参数...]
 ---
 
 ## 引导与日常
+
+### `auto`（裸 `agys`）
+
+不带任何子命令时就是 `auto`：按额度与可用性挑一个帐号切过去，然后启动 `agy`。
+
+```bash
+agys                                  # 挑帐号 → 切换 → 启动 agy
+agys --status                         # 只列出各帐号的额度与可用性
+agys --dry-run                        # 只报告"会选中谁"，不切换不启动
+agys --no-launch                      # 只切换，不启动 agy
+agys --offline --status               # 只用缓存（5 分钟 TTL），不联网
+agys -- --model gemini-2.5-pro        # `--` 之后原样透传给 agy
+agys auto --status                    # 显式写法，等价
+```
+
+| 参数 | 作用 |
+|---|---|
+| `--status` | 打印帐号表（ID / 状态 / 邮箱 / 说明），并标注「额度未知」的原因 |
+| `--dry-run` | 同上，外加「会选中谁」；不写凭据、不启动进程 |
+| `--offline` | 不联网探测，只用 `~/.agy-accounts/quota.json` 的缓存 |
+| `--no-launch` | 只完成切换，不启动 agy |
+| `--close-all` / `--no-guard` / `--yes` / `--allow-layout-change` | 同其它切换类命令 |
+
+**选号规则**：`ok` > `额度未知` > `已用尽` > `需重新登录` > `探测失败`；同档按剩余额度降序，
+再按「最久没切换过」优先。已耗尽的帐号会被跳过并打印警告。
+若**全部帐号都探测失败**（多为网络 / 代理问题），不会直接拒绝，而是按顺序尝试并给出警告。
+
+**额度用光后自动换号**：agy 在 `AGYS_AUTO_FASTFAIL`（默认 20）秒内非零退出时，
+会探测该帐号真实状态；确认是 429 / 额度耗尽才写标记、提醒、换下一个帐号重试。
+退出码 `130` / `2`（用户取消）与超时退出都视为正常结束，不换号。
+
+```bash
+AGYS_AUTO_FASTFAIL=30 agys      # 放宽判定窗口（agy 启动较慢的机器）
+agys < /dev/null                # 非交互环境：只切换，不启动 agy
+```
 
 ### `init`
 

@@ -7,6 +7,9 @@
 
 **一条命令在多个 Google 帐号之间切换 Antigravity CLI（`agy`），不用反复登出登录。**
 
+直接敲 `agys`（不带任何参数）就是「自动挑一个额度最多的帐号并启动 agy」；
+`agy` 一启动就因额度用光退出时，会提醒你一声并自动换下一个帐号。
+
 纯 Python 标准库实现、零运行时依赖，支持 Windows / macOS / Linux。
 `agys` 把每个帐号的登录凭据快照到本地加密 vault，切换时原子替换并读回验证——
 不是改配置骗过 UI，而是真正换掉 agy 读取的那份凭据。
@@ -20,6 +23,7 @@
 | | |
 |---|---|
 | 🔐 **原子切换 + 读回验证** | 写回后重新读取凭据并校验身份，杜绝「假成功」；任一步失败自动回滚 |
+| 🤖 **auto 自动选号** | 裸 `agys` = `agys auto`：按额度与可用性挑帐号；agy 因额度用光秒退时提醒并自动换号重试 |
 | 🧬 **稳定身份判定** | 从 token 的 email / sub / refresh token 指纹识别帐号，邮箱变更或 token 轮换都不会认错 |
 | 🛡️ **本地加密** | Windows DPAPI；macOS / Linux SHAKE256 流密码 + HMAC-SHA256，密钥文件 `0600` |
 | 🚦 **进程守卫** | 检测运行中的 agy 进程，避免后台刷新把旧帐号写回；`--close-all` 可自动关闭并尽力重开 |
@@ -62,7 +66,8 @@ python -m pip install -e .
 ```bash
 agys init            # 检测/安装 agy，并把当前已登录的帐号收录为第一个帐号
 agys add work        # 走 agy 浏览器登录流程添加第二个帐号，完成后直接生效
-agys use work        # 随时切换
+agys                 # ⭐ 日常就用这一条：自动挑额度最多的帐号并启动 agy
+agys use work        # 也可以指定帐号
 agys as work -p "review this diff"   # 切换并以该帐号启动 agy，参数原样透传
 ```
 
@@ -77,7 +82,9 @@ agys as work -p "review this diff"   # 切换并以该帐号启动 agy，参数�
 | 分组 | 命令 | 作用 |
 |---|---|---|
 | 引导 | `init` | 检测/安装 agy，收录当前登录 |
-| 日常 | `add [名字]` | 添加帐号并立即生效 |
+| 日常 | *（无参数）* `agys` | **auto**：自动挑帐号并启动 agy |
+| | `auto` | 同上（显式写法）：`--status` 看额度、`--dry-run` 只报告、`--no-launch` 只切换 |
+| | `add [名字]` | 添加帐号并立即生效 |
 | | `list` (`ls`) | 列出所有帐号（`*` = 当前） |
 | | `use` (`switch`) `<帐号>` | 切换帐号 |
 | | `as` (`run`) `<帐号> [参数…]` | 切换并以该帐号启动 agy |
@@ -102,6 +109,43 @@ agys as work -p "review this diff"   # 切换并以该帐号启动 agy，参数�
 
 全局参数：`--json`（结构化输出）、`--version`。
 切换类命令支持 `--close-all`、`--no-guard`、`--yes`、`--allow-layout-change`。
+
+---
+
+## 自动选号（`agys` / `agys auto`）
+
+```bash
+agys                       # 挑一个帐号切过去，然后启动 agy
+agys --status              # 看所有帐号的额度与可用性，不切换
+agys --dry-run             # 只告诉我"会选谁"
+agys --no-launch           # 只切换，不启动 agy
+agys --offline --status    # 5 分钟内的缓存结果，不联网
+agys -- --model gemini-2.5-pro   # `--` 之后的参数原样透传给 agy
+```
+
+**选号规则**（`ok` > `额度未知` > `已用尽` > `需重新登录` > `探测失败`；
+同档按剩余额度降序，再按「最久没切换过」优先，轮换更均衡）。已耗尽的帐号会被跳过并给出警告。
+
+### 额度用光了怎么办
+
+如果 agy 在 **20 秒内**非零退出（大概率是额度或网络），`agys` 会自动探测该帐号的真实状态：
+
+- 确认是 `429 RESOURCE_EXHAUSTED` / 额度耗尽 → 打印一条提醒，**自动切到下一个帐号重试**；
+- 不是额度问题（比如配置错误、用户取消 `130`）→ 原样返回，不换号，让你看到真实错误。
+
+窗口可用 `AGYS_AUTO_FASTFAIL=30` 调整；确认用尽的结果会写进缓存，下次选号直接跳过。
+
+### 关于「额度百分比」
+
+探测走 Antigravity 的配额接口（`retrieveUserQuota`）。**有 Code Assist 订阅的帐号**能拿到
+`remainingFraction`，`agys --status` 会显示真实百分比。
+
+**免费帐号拿不到百分比**——接口返回 `403 SUBSCRIPTION_REQUIRED`（不是没额度，而是没有可查询的配额包）。
+这种情况下 `agys` 会退回零成本的健康探针（`countTokens`），确认凭据还能用后标记为
+**「额度未知」**，而不是编一个假数字。所以免费帐号之间，`agys` 实际是「挑一个还没被判定用尽的帐号」。
+
+探测只读：只拿 refresh_token 换 access_token，不写凭据库、不改 agy 任何文件。
+结果缓存 5 分钟在 `~/.agy-accounts/quota.json`，探测请求会走 `agys proxy` 的配置。
 
 ---
 
@@ -235,6 +279,8 @@ Antigravity 的 CLI、IDE、App、SDK 共享同一份本地登录态。`agys` �
 | `export` 是迁移而非复制 | refresh token 会被 Google 轮换，两台机器同时使用同一份凭据会互相踢下线。导入新机器后请在源机器 `agys remove` |
 | IDE 可能仍显示旧邮箱 | CLI 与 IDE 共享凭据，但 IDE 窗口需执行 `Developer: Reload Window` 才会刷新显示 |
 | 会话正文无法逐字还原 | agy 把正文存成 protobuf，`agys history` 只能给出元信息与可读摘要 |
+| 免费帐号看不到额度百分比 | Google 对无订阅帐号不返回配额包（`403 SUBSCRIPTION_REQUIRED`），`auto` 只能判「可用 / 已用尽」，见[上文](#关于额度百分比) |
+| 换号发生在「启动即失败」之后 | `auto` 靠 agy 的退出码与耗时判断，不会在会话中途打断；长会话里真正撞到 429 需要手动 `agys auto` 再起一次 |
 | macOS 后端未实机验证 | 欢迎反馈与 PR，见 [CONTRIBUTING.md](CONTRIBUTING.md) |
 
 ---

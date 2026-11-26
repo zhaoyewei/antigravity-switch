@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.6.0
+
+**auto 自动选号：裸 `agys` 就是它**
+- 不带任何子命令时自动按额度与可用性挑帐号：`agys` = `agys auto`
+- 排序：`ok` > `额度未知` > `已用尽` > `需重新登录` > `探测失败`；同档按剩余额度降序，
+  再按「最久没切换过」优先，轮换更均衡；已耗尽的帐号跳过并告警
+- `--status`（看额度表）/ `--dry-run`（只报告选谁）/ `--offline`（只用缓存）/
+  `--no-launch`（只切换）；`--` 之后原样透传给 agy
+- 非交互终端只切换不启动，绝不把终端交给一个看不见的进程
+- 全部帐号「探测失败」（多为网络 / 代理问题）时不直接拒绝，按顺序尝试并告警
+
+**额度用光自动换号**
+- agy 在 `AGYS_AUTO_FASTFAIL`（默认 20）秒内非零退出时，先探测该帐号真实状态，
+  **确认**是 429 / 额度耗尽才写标记、提醒、换下一个帐号重试
+- 退出码 `130` / `2`（用户取消）与超时退出不换号，避免打断真实错误
+
+**额度探测（`quota.py`）**
+- 走 Antigravity 配额接口 `retrieveUserQuota`：有订阅的帐号可拿到 `remainingFraction` 并显示百分比
+- 免费帐号返回 `403 SUBSCRIPTION_REQUIRED`（无配额包，非无额度），退回零成本健康探针
+  `countTokens`，确认可用后标记「额度未知」，**不编造百分比**
+- 分层判定：200+配额包 → `ok`/`exhausted`；429 → `exhausted`；401 → `auth`；其余 → `error`
+- 结果缓存 5 分钟于 `~/.agy-accounts/quota.json`；探测只读，只换 token 不写凭据库
+- 探测请求复用 `agys proxy` 的代理配置（`proxy.open_request()`）
+
+**代码整理（纯重构，行为不变）**
+- `cli.py` 从 868 行缩到薄入口（parser + 分派 + 统一错误处理），实现按域拆到
+  `commands/`：`accounts` / `switching` / `migrate` / `diag` / `hist` / `misc` / `net`
+- 跨命令流程抽到 `runtime.py`：`ensure_ready` / `guard_processes` / `switch_to` /
+  `switch_if_needed` / `launch` / `pick_account` / `resolve_or_pick`
+- 帮助文本抽到 `helptext.py`（纯数据）；删除 `extra.py`（内容已全部迁出）
+- 修复：Windows 上 `stdin` 重定向到 NUL 时 `isatty()` 误报 True，导致 `agys use`
+  在脚本里被误判成交互场景；现在统一用 `tui.supported()`（同时校验 stdout）
+
+**测试**
+- 新增 `tests/unit/test_quota.py`（20 个用例，全部 mock 网络，绝不联网）
+- 集成测试新增「7b. auto 选号（离线）」段；单测 105 passed + 1 skipped，集成 67 项全通过
+
 ## 0.5.0
 
 **布局自动发现 + 自动兼容（不做数据迁移）**

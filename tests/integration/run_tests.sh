@@ -83,7 +83,7 @@ contains "rename 生效" "$($AGYS list)" "alice-main"
 contains "审计日志有记录" "$($AGYS log -n 50)" "switch"
 contains "layout 输出指纹" "$($AGYS layout)" "fingerprint"
 contains "doctor 输出加密方式" "$($AGYS doctor)" "加密"
-contains "version" "$($AGYS version)" "0.5.0"
+contains "version" "$($AGYS version)" "0.6.0"
 contains "--json doctor" "$($AGYS --json doctor)" '"ok": true'
 
 echo "== 5b. 扩展命令（status / whoami / ids / info / default / 别名 / help / 补全 / 自检修复 / 备份 / 登出） =="
@@ -186,6 +186,18 @@ contains "切换仍然成功" "$OUT" "已切换到"
 contains "layout --adopt 可执行" "$($AGYS layout --adopt)" "布局"
 AGYS_CRED_TARGET="gemini:changed" $AGYS use bob --allow-layout-change >/dev/null
 PASS=$((PASS+1)); echo "  ok: --allow-layout-change 仍可强制放行"
+
+echo "== 7b. auto 选号（离线，不联网不启动） =="
+contains "auto --status 列出帐号" "$($AGYS auto --status --offline)" "额度"
+contains "auto --status 标注额度未知" "$($AGYS auto --status --offline)" "额度未知"
+contains "auto --status 说明免费帐号无配额包" "$($AGYS auto --status --offline)" "免费帐号"
+contains "auto --dry-run 报告会选中谁" "$($AGYS auto --dry-run --offline)" "会选中"
+contains "auto --dry-run JSON 带 choice" "$($AGYS --json auto --dry-run --offline)" '"choice"'
+contains "auto 状态表覆盖全部帐号" "$($AGYS auto --status --offline)" " bob "
+contains "裸 agys --status 等价 auto" "$($AGYS --status --offline)" "额度"
+contains "裸 agys 等同 auto（空 vault 提示加号）" \
+  "$(AGYS_HOME="$T/home3" AGYS_MEMORY_FILE="$T/home3/memory_credential.json" \
+    $AGYS 2>&1)" "还没有任何帐号"
 
 echo "== 8. remove（确认 + 登出） =="
 if $AGYS remove bob >/dev/null 2>&1; then FAIL=$((FAIL+1)); echo "  FAIL: 无 --yes 应拒绝"; else PASS=$((PASS+1)); echo "  ok: 无 --yes 被拒绝"; fi

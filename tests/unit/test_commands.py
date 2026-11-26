@@ -1,4 +1,4 @@
-"""扩展命令（extra.py）与命令别名的单元测试。"""
+"""命令实现（commands 包）与命令别名的单元测试。"""
 import json
 import os
 import urllib.request

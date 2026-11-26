@@ -30,6 +30,8 @@ agys doctor --fix         # 自检后自动修复常见问题
 | macOS / Linux 行为与 Windows 不同 | [平台差异](#11-平台差异) |
 | 想彻底重来 | [完全重置](#12-完全重置) |
 | 会话历史看不到 / `history` 报错 | [会话历史](#14-会话历史相关) |
+| `agys` 选中了「额度未知」的帐号 | [auto 与额度](#15-auto-与额度探测) |
+| `auto` 静默不换号 / 换号太早 | [auto 与额度](#15-auto-与额度探测) |
 
 ---
 
@@ -243,3 +245,44 @@ agys logout                       # 清除活跃凭据
 **`history show` 只有零星几行文字**
 会话正文是 protobuf，无法逐字还原。`show` 给的是从 blob 里提取的可读摘要，
 工具调用步骤可能只剩一行描述。这是已知限制，见 [ROADMAP](../ROADMAP.md)。
+
+---
+
+## 15. auto 与额度探测
+
+**为什么 `agys --status` 显示「额度未知」而不是百分比**
+免费帐号调用配额接口会返回 `403 SUBSCRIPTION_REQUIRED`——不是没额度，而是
+Google 不给免费帐号返回配额包（`remainingFraction`）。`agys` 这时退回零成本的
+健康探针（`countTokens`），能打通就标「额度未知」并参与选号，打不通才标失败。
+有 Code Assist 订阅的帐号会显示真实百分比。详见
+[README 的「关于额度百分比」](../README.md#关于额度百分比)。
+
+**`auto` 一直不换号**
+换号只在「agy 启动即失败」之后触发，判定条件是**非零退出 + 耗时短于**
+`AGYS_AUTO_FASTFAIL`（默认 20 秒）+ 探测确认额度耗尽。如果 agy 要十几秒才因 429
+退出，就会超出窗口而不触发：
+
+```bash
+AGYS_AUTO_FASTFAIL=45 agys      # 放宽窗口
+agys --status                    # 先确认到底哪个帐号被标记了 exhausted
+```
+
+另外，退出码 `130` / `2`（用户按了 Ctrl+C）与正常退出都不会换号——这是刻意的，
+避免把「你自己取消」当成失败。
+
+**`auto` 换号太频繁 / 跳过了其实还能用的帐号**
+确认用尽的结论会写进 `~/.agy-accounts/quota.json` 缓存 5 分钟。清掉缓存即可重探：
+
+```bash
+rm ~/.agy-accounts/quota.json
+agys --status                   # 强制重新探测（默认会重新联网）
+```
+
+**探测本身失败（`state=error`）**
+看 `agys --status` 的说明列。常见原因是网络不通：探测走 `agys proxy` 配置的代理，
+如果你在受限网络里，先 `agys proxy set http://127.0.0.1:7890`，或临时
+`AGYS_NO_PROXY=1 agys --status` 直连试试。探测失败不影响切换，只是这一轮不参与排序。
+
+**`agys` 在脚本 / CI 里没有启动 agy**
+设计如此：非交互终端只完成切换、不把终端交给一个看不见的进程。需要启动就用
+`agys as <帐号>` 或直接 `agy`。`--no-launch` 可以显式达到同样效果。

@@ -1,6 +1,6 @@
 # local sandboxes / build artifacts
 .t/
-.test-sandbox/
+.test-sandbox*/
 .install-test/
 __pycache__/
 *.py[cod]

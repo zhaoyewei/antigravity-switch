@@ -1,4 +1,4 @@
-"""CLI 公共工具（供 cli.py 与 extra.py 共用，避免循环导入）。"""
+"""CLI 公共工具（供 cli.py、runtime.py 与 commands/ 共用，避免循环导入）。"""
 from __future__ import annotations
 
 import json

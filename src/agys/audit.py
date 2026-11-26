@@ -5,7 +5,7 @@ import json
 import os
 
 from .config import paths
-from .crypto import secure_dir, secure_write
+from .crypto import secure_dir
 from .vault import now_iso
 
 

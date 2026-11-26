@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from ..config import IS_LINUX, IS_MAC, IS_WIN, paths
+from ..config import IS_MAC, IS_WIN, paths
 
 
 class CredentialError(Exception):

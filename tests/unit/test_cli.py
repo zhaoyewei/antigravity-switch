@@ -115,3 +115,43 @@ def test_doctor_json(sandbox, capsys):
     rc, out = _json(["--json", "doctor"], capsys)
     assert rc == 0 and out["ok"] is True
     assert "profiles" in out and "warnings" in out
+
+
+# ---------------------------------------------------------------- 裸 agys = auto
+
+def test_bare_invocation_maps_to_auto():
+    from agys.cli import build_parser, _default_to_auto
+    p = build_parser()
+    assert _default_to_auto([], p) == ["auto"]
+    assert _default_to_auto(["--status"], p) == ["auto", "--status"]
+    assert _default_to_auto(["--json", "--dry-run"], p) == ["--json", "auto", "--dry-run"]
+    assert _default_to_auto(["--", "-p", "hi"], p) == ["auto", "--", "-p", "hi"]
+
+
+def test_explicit_subcommand_is_untouched():
+    from agys.cli import build_parser, _default_to_auto
+    p = build_parser()
+    assert _default_to_auto(["use", "work"], p) == ["use", "work"]
+    assert _default_to_auto(["--json", "list"], p) == ["--json", "list"]
+
+
+def test_typo_is_not_silently_turned_into_agy_args():
+    """`agys lst` 应该报错，而不是把 lst 当成 agy 的参数启动一个进程。"""
+    from agys.cli import build_parser, _default_to_auto
+    p = build_parser()
+    assert _default_to_auto(["lst"], p) == ["lst"]
+
+
+def test_bare_flags_reach_auto(sandbox, monkeypatch, capsys, blob_alice):
+    """`agys --status` 与 `agys auto --status` 行为一致。"""
+    from agys import quota
+    monkeypatch.setenv("AGYS_STUB_BLOB", blob_alice.decode("utf-8"))
+    monkeypatch.setenv("AGYS_STUB_EMAIL", "alice@gmail.com")
+    assert main(["add", "alice"]) == 0
+    monkeypatch.setattr(quota, "probe", lambda acc_id, cache=None: {
+        "id": acc_id, "state": "unknown", "remaining": None,
+        "detail": "无配额包", "models": [], "checked": 0})
+    capsys.readouterr()
+    assert main(["--status"]) == 0
+    out = capsys.readouterr().out
+    assert "额度未知" in out and "alice" in out
