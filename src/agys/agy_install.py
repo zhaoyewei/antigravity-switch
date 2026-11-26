@@ -25,7 +25,7 @@ WIN_CMD_CMD = ("curl -fsSL https://antigravity.google/cli/install.cmd -o install
                "&& install.cmd && del install.cmd")
 
 # 只有这些命令真正需要 agy 二进制；其它命令（诊断、导入导出等）不触发安装
-NEEDS_AGY = frozenset({"init", "add", "use", "as", "switch", "run"})
+NEEDS_AGY = frozenset({"init", "add", "use", "as", "switch", "run", "tui"})
 
 
 def detect():

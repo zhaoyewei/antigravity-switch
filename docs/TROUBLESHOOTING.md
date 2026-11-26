@@ -18,7 +18,7 @@ agys doctor --fix         # 自检后自动修复常见问题
 | 现象 | 直接看 |
 |---|---|
 | 切换被拒绝，提示有 agy 进程在跑 | [进程守卫](#1-切换被拒绝检测到运行中的-antigravity-进程) |
-| 提示「存储布局变化」 | [布局指纹](#2-提示存储布局变化-切换被拒绝) |
+| 提示「存储布局变化」 | [布局自动适配](#2-提示存储布局变化-切换被拒绝) |
 | 切换成功但 IDE 还显示旧邮箱 | [IDE 显示](#3-切换后-ide-仍显示旧邮箱) |
 | 找不到 agy / 自动安装失败 | [agy 安装](#4-找不到-agy--自动安装失败) |
 | `current` 说活跃凭据「未纳管」 | [未纳管凭据](#5-活跃凭据未纳入管理) |
@@ -29,6 +29,7 @@ agys doctor --fix         # 自检后自动修复常见问题
 | 曾经崩溃 / 断电 | [事务日志](#10-存在未完成事务) |
 | macOS / Linux 行为与 Windows 不同 | [平台差异](#11-平台差异) |
 | 想彻底重来 | [完全重置](#12-完全重置) |
+| 会话历史看不到 / `history` 报错 | [会话历史](#14-会话历史相关) |
 
 ---
 
@@ -51,20 +52,32 @@ agys use work --no-guard     # 强制切换，风险自负
 
 ## 2. 提示「存储布局变化」，切换被拒绝
 
-**原因**：`agys` 会为 agy 的存储布局（版本、平台、凭据目标、各路径）生成指纹。
-agy 升级换了存储位置时，继续按旧位置写入会写到失效位置——看起来成功，实际没生效。
+**背景**：`agys` 为 agy 的存储布局生成结构指纹，只包含决定「往哪写」的字段
+（平台 / 凭据后端 / 凭据条目名 / `google_accounts.json` 路径 / 受控 token 路径）。
+**agy 版本号不参与指纹**，所以单纯升级 agy 不会拦住切换。
 
-**解决**：先确认你确实升级过 agy，然后对比并接受新布局：
+**自动处理**：指纹变化（或「有活跃凭据但状态文件不见了」）时，`agys` 会自动在
+候选位置里搜索并尝试兼容。候选布局必须通过三道关卡才会被采纳：
+
+1. 新指纹确实与缓存不同；
+2. 新位置确实有数据（凭据或状态文件）；
+3. 新旧位置的身份一致（比对 token 里的 email / sub）。
+
+采纳只是**更新指针**，不搬文件、不改格式。任何一步无法确认就退回拒绝。
+
+**仍然被拒绝时**：
 
 ```bash
-agys layout                                # 对比当前探测值与缓存指纹
-agys use work --allow-layout-change         # 接受变化并更新指纹
+agys layout --discover                      # 看当前探测值 + 所有候选布局
+agys layout --adopt                         # 手动采纳：有更好的候选就适配，否则把现状记为基准
+agys use work --allow-layout-change         # 跳过发现，直接把当前布局记为基准
 ```
 
 如果没升级过 agy 却出现这个提示，先跑 `agys doctor` 检查是否改过
-`AGYS_CRED_TARGET` / `AGYS_GEMINI_HOME` 等环境变量，或改过 `AGYS_BACKEND`。
+`AGYS_CRED_TARGET` / `AGYS_GEMINI_HOME` / `AGYS_BACKEND` —— 这些环境变量被视为
+「用户显式配置」，会被直接采纳而不会触发拒绝。
 
-> 只读命令（`list` / `current` / `doctor` / `export`）永远可用，不受布局变化拦截。
+> 只读命令（`list` / `current` / `doctor` / `export` / `history`）永远可用。
 
 ---
 
@@ -210,3 +223,23 @@ agys logout                       # 清除活跃凭据
 还解决不了？请开 issue 并附上（**已脱敏**的）`agys doctor` 输出、
 `agys --json doctor`、`agys version`、操作系统与 agy 版本。
 安全相关的问题请按 [SECURITY.md](../SECURITY.md) 私下报告。
+
+---
+
+## 14. 会话历史相关
+
+**agy 的历史不按帐号分区。** `~/.gemini/antigravity-cli/` 下的摘要库、会话库、
+`history.jsonl` 里都没有 account / email / user 字段，云端也只有
+`streamGenerateContent`、没有会话列表接口。所以切帐号不会换出另一套历史。
+
+**`agys history` 提示「没找到 agy 会话目录」**
+说明 `$AGYS_GEMINI_HOME/antigravity-cli/` 不存在。先随便跑一次 agy 让它生成配置；
+如果你把 gemini 目录放在了别处，用 `AGYS_GEMINI_HOME` 指过去。
+
+**列表里看到 `?` 标记**
+表示该会话不在 `conversation_summaries.db` 里，只是从 `conversations/*.db` 反推出来的
+（摘要记录被清理过）。`--no-orphans` 可以隐藏它们。
+
+**`history show` 只有零星几行文字**
+会话正文是 protobuf，无法逐字还原。`show` 给的是从 blob 里提取的可读摘要，
+工具调用步骤可能只剩一行描述。这是已知限制，见 [ROADMAP](../ROADMAP.md)。

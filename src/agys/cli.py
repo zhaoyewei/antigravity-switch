@@ -7,8 +7,10 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 
-from . import __version__, audit, doctor, expimp, identity, journal, layout, process
+from . import (__version__, audit, doctor, expimp, history, identity, journal,
+               layout, process, tui)
 from . import APP, agy_install, extra, proxy
 from .common import AgysError, Reporter, SwitchLock, confirm, read_ga, write_ga
 from .config import agy_argv, paths
@@ -43,13 +45,14 @@ def ensure_ready(args, rep, store, v, strict=True):
     notice = journal.recover(store)
     if notice:
         rep.warn(notice)
-    # 只读/诊断命令永远可用：布局变化只拦截会写凭据的切换类命令
-    allow = (getattr(args, "allow_layout_change", False)
-             or not strict or installed)
+    # 只读/诊断命令永远可用：布局问题只拦截会写凭据的切换类命令
+    allow = (getattr(args, "allow_layout_change", False) or installed)
     ok, msg = layout.verify(v, store, allow_change=allow)
     if not ok:
-        raise AgysError(msg)
-    if msg:
+        if strict:
+            raise AgysError(msg)
+        rep.warn(msg.splitlines()[0] + "（本次为只读命令，继续执行）")
+    elif msg:
         rep.msg(f"{APP}: {msg}")
 
 
@@ -264,25 +267,40 @@ def cmd_current(args, rep, store, v):
         rep.warn("vault 记录的当前帐号与活跃凭据不一致，建议 agys use 重新切换")
 
 
+def _pick_account(args, rep, store, v, title="agys 帐号切换"):
+    """交互式选号。非 TTY 场景直接报错，不猜。"""
+    if not v["accounts"]:
+        raise AgysError("还没有任何帐号。用 agys add 添加第一个。")
+    if rep.as_json or not tui.supported():
+        raise AgysError("用法：agys use <帐号>（交互终端里可以省略帐号直接选）")
+    try:
+        active = layout.live_identity(store, read_ga())
+    except (CredentialError, OSError):
+        active = None
+    try:
+        chosen = tui.pick(v["accounts"], current=v.get("current"),
+                          active=active, title=title)
+    except RuntimeError as e:
+        raise AgysError(str(e))
+    if not chosen:
+        raise AgysError("已取消")
+    return chosen
+
+
 def cmd_use(args, rep, store, v):
     name = args.name
     # 非交互 / --json 场景下，省略帐号时回落到默认帐号
     if not name and (not sys.stdin.isatty() or rep.as_json) and v.get("default"):
         name = v["default"]
     if not name:
-        if not sys.stdin.isatty() or rep.as_json:
-            raise AgysError("用法：agys use <帐号>（或交互终端中直接回车选择）")
-        accs = sorted(v["accounts"])
-        for i, a in enumerate(accs, 1):
-            print(f"  {i}. {a} ({v['accounts'][a].get('email') or '-'})")
-        try:
-            choice = input("选择编号: ").strip()
-        except EOFError:
-            raise AgysError("已取消")
-        try:
-            name = accs[int(choice) - 1]
-        except (ValueError, IndexError):
-            raise AgysError("无效选择")
+        name = _pick_account(args, rep, store, v)
+    acc_id = resolve(name, v)
+    with SwitchLock():
+        switch_to(acc_id, args, rep, store, v)
+
+
+def cmd_tui(args, rep, store, v):
+    name = _pick_account(args, rep, store, v, title="agys 帐号切换（Enter 确认）")
     acc_id = resolve(name, v)
     with SwitchLock():
         switch_to(acc_id, args, rep, store, v)
@@ -391,10 +409,34 @@ def cmd_export(args, rep, store, v):
     rep.set(path=path, count=len(out["accounts"]), checksum=out["checksum"])
 
 
+def _unique_acc_id(base, accounts):
+    """rename 策略下找一个不冲突的 id：alice -> alice-2 -> alice-3 ..."""
+    if base not in accounts:
+        return base
+    n = 2
+    while f"{base}-{n}" in accounts:
+        n += 1
+    return f"{base}-{n}"
+
+
+def _ask_conflict(acc_id, incoming, v, args):
+    if getattr(args, "yes", False):
+        return True
+    if not sys.stdin.isatty():
+        raise AgysError(
+            f"帐号 '{acc_id}' 已存在，而 --on-conflict ask 在非交互终端下无法提问。"
+            "改用 skip / overwrite / rename，或加 --yes 表示全部覆盖。")
+    cur = v["accounts"][acc_id]
+    answer = input(f"帐号 '{acc_id}' 已存在（现有 {cur.get('email') or '-'} → "
+                   f"导入 {incoming.get('email') or '-'}），覆盖？[y/N] ")
+    return answer.strip().lower() in ("y", "yes")
+
+
 def cmd_import(args, rep, store, v):
     accounts, warns = expimp.read_import(args.path, verify=not args.no_verify)
+    policy = getattr(args, "on_conflict", "overwrite")
     with SwitchLock():
-        added, updated = [], []
+        added, updated, skipped, renamed = [], [], [], []
         for a in accounts:
             acc_id = slugify(a.get("id") or "")
             if not acc_id:
@@ -406,16 +448,115 @@ def cmd_import(args, rep, store, v):
                     "aliases": a.get("aliases") or [], "identity": ident,
                     "created": a.get("created") or ""}
             existed = acc_id in v["accounts"]
-            save_profile(acc_id, blob, ga, meta)
-            v["accounts"][acc_id] = {"id": acc_id, **meta}
-            (updated if existed else added).append(acc_id)
+            target = acc_id
+            if existed:
+                if policy == "skip":
+                    skipped.append(acc_id)
+                    continue
+                if policy == "ask" and not _ask_conflict(acc_id, a, v, args):
+                    skipped.append(acc_id)
+                    continue
+                if policy == "rename":
+                    target = _unique_acc_id(acc_id, v["accounts"])
+            save_profile(target, blob, ga, meta)
+            v["accounts"][target] = {"id": target, **meta}
+            if not existed:
+                added.append(target)
+            elif target == acc_id:
+                updated.append(acc_id)
+            else:
+                renamed.append(f"{acc_id}->{target}")
         save_vault(v)
-        audit.log("import", result="ok", detail=f"{len(added)} new, {len(updated)} updated")
+        audit.log("import", result="ok",
+                  detail=f"{len(added)} new, {len(updated)} updated, "
+                         f"{len(skipped)} skipped, {len(renamed)} renamed ({policy})")
         for w in warns:
             rep.warn(w)
-        rep.msg(f"{APP}: 新导入 {len(added)} 个、更新 {len(updated)} 个；"
-                f"导入不会自动切换，用 agys use <id> 切换")
-        rep.set(added=added, updated=updated)
+        parts = [f"新导入 {len(added)} 个", f"更新 {len(updated)} 个"]
+        if skipped:
+            parts.append(f"跳过 {len(skipped)} 个")
+        if renamed:
+            parts.append("重命名 " + ", ".join(renamed))
+        rep.msg(f"{APP}：" + "、".join(parts) + "；导入不会自动切换，用 agys use <id> 切换")
+        rep.set(added=added, updated=updated, skipped=skipped, renamed=renamed,
+                on_conflict=policy)
+
+
+def cmd_history(args, rep, store, v):
+    """只读查看 agy 会话历史。历史本就跨帐号共享，这里不区分帐号。"""
+    if not history.available():
+        raise AgysError("没找到 agy 会话目录：" + history.base_dir()
+                        + "\n先运行一次 agy，或用 AGYS_GEMINI_HOME 指定配置目录。")
+    action = args.action or "list"
+    orphans = getattr(args, "orphans", True)
+    limit = args.limit
+
+    if action == "show":
+        if not args.target:
+            raise AgysError("用法：agys history show <会话 id 前缀>")
+        hits, row = history.find(args.target, include_orphans=orphans)
+        if row is None:
+            if hits:
+                raise AgysError("匹配到多个会话，请给更长的前缀："
+                                + ", ".join(h["id"] for h in hits[:8]))
+            raise AgysError(f"没有找到会话 {args.target}")
+        steps = history.read_steps(row["id"], limit=args.steps)
+        rep.set(conversation=row, steps=steps)
+        rep.msg(f"{APP}: {row['title'] or '(未命名会话)'}")
+        rep.msg(f"  id         {row['id']}")
+        rep.msg(f"  时间       {row['updated'] or '-'}    步数 {row['steps']}"
+                + (f"    大小 {row['size'] // 1024} KB" if row.get("size") else ""))
+        if row["workspace"]:
+            rep.msg("  workspace  " + ", ".join(row["workspace"]))
+        if row.get("status"):
+            rep.msg(f"  状态       {row['status']}")
+        if not steps:
+            rep.msg("  （读不到步骤明细，会话文件可能已被清理）")
+        shown = 0
+        for st in steps:
+            if st["excerpt"]:
+                rep.msg(f"    [{st['idx']:>3}] {st['excerpt'][:100]}")
+                shown += 1
+        if steps and not shown:
+            rep.msg("  （这个会话没有可读的文字内容）")
+        return
+
+    if action == "export":
+        fmt = args.format
+        suffix = ".md" if fmt == "md" else ".json"
+        target = args.target or os.path.join(
+            paths().exports, "history-" + time.strftime("%Y%m%d-%H%M%S") + suffix)
+        if not os.path.splitext(target)[1]:
+            target += suffix
+        items = history.collect(search=args.search, workspace=args.workspace,
+                                limit=None, include_orphans=orphans)
+        payload = history.build_export(items, details=args.detail, max_steps=args.steps)
+        secure_dir(os.path.dirname(target) or ".")
+        if fmt == "md":
+            body = history.render_markdown(payload)
+        else:
+            body = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+        with open(target, "w", encoding="utf-8") as f:
+            f.write(body)
+        rep.set(path=target, count=payload["count"])
+        rep.msg(f"{APP}: 已导出 {payload['count']} 个会话到 {target}")
+        return
+
+    search = args.search or (args.target if action == "search" else None)
+    items = history.collect(search=search, workspace=args.workspace,
+                            limit=limit, include_orphans=orphans)
+    rep.set(count=len(items), conversations=items)
+    if not items:
+        rep.msg("没有匹配的会话。")
+        return
+    rep.msg(f"{APP}: {len(items)} 个会话（agy 历史不按帐号分区，所有帐号共用同一份）")
+    for i in items:
+        flag = "?" if i["source"] == "scan" else " "
+        rep.msg(f" {flag} {i['updated'] or '-':<19} {i['steps']:>4}步  "
+                f"{i['id'][:8]}  {(i['title'] or '(未命名会话)')[:46]}")
+    if any(i["source"] == "scan" for i in items):
+        rep.msg("  ? = 摘要库里没有记录，仅从会话文件推断（可能已被清理）")
+    rep.msg("  详情：agys history show <id 前缀>；搜索：agys history --search 关键词")
 
 
 def cmd_log(args, rep, store, v):
@@ -431,11 +572,32 @@ def cmd_layout(args, rep, store, v):
     cur = layout.probe(store)
     cached = v.get("layout") or {}
     rep.set(current=cur, cached=cached)
-    for k in ("agy_version", "platform", "backend", "cred_target", "ga_path",
-              "token_path", "ide_state_path", "fingerprint", "has_credential",
+    rep.msg(f"{APP}: 存储布局探测")
+    for k in ("platform", "backend", "cred_target", "ga_path", "token_path",
+              "agy_version", "ide_state_path", "fingerprint", "has_credential",
               "ga_exists", "token_exists", "ide_state_exists"):
-        rep.msg(f"  {k:<20} {cur.get(k)}"
-                + ("   (缓存: " + str(cached.get(k)) + ")" if cached.get(k) != cur.get(k) else ""))
+        old = layout._cached_value(cached, k) if cached else None
+        mark = "" if old in (None, cur.get(k)) else f"   (缓存: {old})"
+        rep.msg(f"  {k:<18} {cur.get(k)}{mark}")
+    ov = cur.get("overrides") or {}
+    rep.msg("  自动适配覆盖     " + (", ".join(f"{k}={x}" for k, x in ov.items()) or "无"))
+    if getattr(args, "discover", False) or getattr(args, "adopt", False):
+        cands = layout.discover(store)
+        rep.msg(f"  候选布局 {len(cands)} 个（只读探测）")
+        for c in cands:
+            mark = " <- 当前" if c["fingerprint"] == cur["fingerprint"] else ""
+            rep.msg(f"    [{c['fingerprint']}] cred={c['cred_target']}  "
+                    f"ga={'有' if c['ga_exists'] else '无'}  "
+                    f"token={'有' if c['token_exists'] else '无'}  "
+                    f"凭据={'有' if c['has_credential'] else '无'}{mark}")
+    if getattr(args, "adopt", False):
+        ok, msg = layout.adopt_best(v, store)
+        if ok:
+            rep.msg(f"{APP}: {msg}")
+        else:
+            cur = layout.adopt_current(v, store)
+            rep.msg(f"{APP}: 未找到更合适的候选布局，已把当前布局记为基准 "
+                    f"{cur['fingerprint']}")
 
 
 def cmd_doctor(args, rep, store, v):
@@ -533,9 +695,13 @@ def build_parser():
     sub.add_parser("current", help="查看当前帐号与活跃凭据是否一致").set_defaults(func=cmd_current)
 
     sp = sub.add_parser("use", aliases=["switch"], help="切换帐号（id / 邮箱 / 别名 / 唯一前缀）")
-    sp.add_argument("name", nargs="?", help="帐号；交互终端下省略可选编号")
+    sp.add_argument("name", nargs="?", help="帐号；交互终端下省略会打开选择器")
     _guard_flags(sp)
     sp.set_defaults(func=cmd_use)
+
+    sp = sub.add_parser("tui", help="交互式选择帐号并切换（方向键 + 回车）")
+    _guard_flags(sp)
+    sp.set_defaults(func=cmd_tui)
 
     sp = sub.add_parser("as", aliases=["run"], help="切换并以该帐号启动 agy，后续参数透传")
     sp.add_argument("name", nargs="?", help="帐号")
@@ -566,13 +732,39 @@ def build_parser():
     sp = sub.add_parser("import", help="导入导出文件（不自动切换）")
     sp.add_argument("path")
     sp.add_argument("--no-verify", action="store_true", help="跳过校验和检查")
+    sp.add_argument("--on-conflict", default="overwrite",
+                    choices=("ask", "skip", "overwrite", "rename"),
+                    help="id 已存在时的处理方式：ask 逐个询问 / skip 保留现有 / "
+                         "overwrite 覆盖（默认）/ rename 换个 id 并存")
+    sp.add_argument("--yes", action="store_true",
+                    help="配合 --on-conflict ask：冲突时一律覆盖")
     sp.set_defaults(func=cmd_import)
 
     sp = sub.add_parser("log", help="查看切换审计日志")
     sp.add_argument("-n", "--limit", type=int, default=20)
     sp.set_defaults(func=cmd_log)
 
-    sub.add_parser("layout", help="显示当前 agy 存储布局探测结果").set_defaults(func=cmd_layout)
+    sp = sub.add_parser("history", help="查看/搜索 agy 会话历史（所有帐号共享同一份）")
+    sp.add_argument("action", nargs="?", default="list",
+                    choices=("list", "show", "search", "export"))
+    sp.add_argument("target", nargs="?",
+                    help="show: 会话 id 前缀 / search: 关键词 / export: 输出路径")
+    sp.add_argument("-n", "--limit", type=int, default=20)
+    sp.add_argument("--search", help="按关键词过滤（标题 / preview / workspace / id）")
+    sp.add_argument("--workspace", help="按 workspace 路径过滤")
+    sp.add_argument("--no-orphans", dest="orphans", action="store_false",
+                    help="不显示摘要库里没有记录的孤立会话")
+    sp.add_argument("--steps", type=int, default=30, help="show 时最多列多少步")
+    sp.add_argument("--detail", action="store_true", help="export 时附带步骤摘要")
+    sp.add_argument("--format", default="json", choices=("json", "md"),
+                    help="export 的格式")
+    sp.set_defaults(func=cmd_history)
+
+    sp = sub.add_parser("layout", help="显示 agy 存储布局；--discover 列出候选，--adopt 自动适配")
+    sp.add_argument("--discover", action="store_true", help="列出候选布局（只读探测）")
+    sp.add_argument("--adopt", action="store_true",
+                    help="自动发现并采纳可用布局；无候选时把当前布局记为基准")
+    sp.set_defaults(func=cmd_layout)
 
     sp = sub.add_parser("doctor", help="环境自检；--fix 自动修复常见问题")
     sp.add_argument("--fix", action="store_true",
@@ -654,9 +846,11 @@ def main(argv=None):
     args.cmd = aliases.get(args.cmd, args.cmd)
     rep = Reporter(args.json)
     try:
-        store = get_store()
         v = load_vault()
-        strict = args.cmd in ("add", "use", "as")
+        # 上次自动适配的布局必须先落到进程配置，之后才能构造凭据后端
+        layout.apply_cached(v)
+        store = get_store()
+        strict = args.cmd in ("add", "use", "as", "tui")
         ensure_ready(args, rep, store, v, strict=strict)
         args.func(args, rep, store, v)
         rep.done()

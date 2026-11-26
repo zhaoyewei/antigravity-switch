@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.5.0
+
+**布局自动发现 + 自动兼容（不做数据迁移）**
+- 结构指纹只包含决定「往哪写」的字段（平台 / 凭据后端 / 凭据条目名 /
+  `google_accounts.json` 路径 / 受控 token 路径）；`agy_version` 只记录不参与判断，
+  **agy 升级不再打断切换**
+- 指纹变化或「有活跃凭据但状态文件不见了」时，自动在候选位置搜索：
+  Windows 用 `CredEnumerateW` 枚举凭据条目、扫描同名状态文件与受控 token 路径
+- 三道采纳关卡：新指纹确实不同 / 新位置确实有数据 / 新旧身份一致（比对 token 的 email、sub）
+- 采纳只更新指针（进程级路径覆盖），**不搬文件、不改格式**；任何一步无法确认就拒绝切换
+- 新命令：`agys layout --discover`（列出候选）、`agys layout --adopt`（手动采纳）
+- 环境变量显式指定的位置被视为用户配置，直接采纳而不再触发拒绝
+- 覆盖值会做存活检查，陈旧指针自动丢弃，避免工具被历史配置带偏
+
+**`agys history`：会话历史（跨帐号共享）**
+- 只读解析 `conversation_summaries.db` + `conversations/*.db`，不修改任何 agy 文件
+- `history` 列表 / `--search` / `--workspace` / `--no-orphans` / `show <id 前缀>` /
+  `export --format json|md --detail`
+- 从 protobuf blob 中提取可读摘要作为步骤描述（正文无法逐字还原）
+- 摘要库里没有记录的孤立会话也会被扫出来，用 `?` 标记
+
+**交互式 TUI**
+- 新命令 `agys tui`；`agys use` 在交互终端下省略帐号时也会进入
+- 方向键移动、`1-9` 跳转、`Enter` 切换、`q` 取消；显示当前帐号与活跃凭据
+- 纯标准库（Windows `msvcrt` / Unix `termios`），不引入 `curses`；非 TTY 明确报错
+
+**导入冲突策略**
+- `import --on-conflict ask|skip|overwrite|rename`，默认 `overwrite` 保持兼容
+- `rename` 自动排号（`alice` → `alice-2` → `alice-3`…），`ask` 在非交互终端下报错
+- 输出与 `--json` 结果区分「新导入 / 更新 / 跳过 / 重命名」
+
+**其它**
+- Linux 凭据后端完成实机验证（README 已更新平台状态表）
+- `status` 增加会话历史概览；`doctor` 增加布局指纹不一致与状态文件缺失的警告
+- 文档：README / COMMANDS / TROUBLESHOOTING / ROADMAP 全面同步
+
 ## 0.4.0
 
 **代理支持（只影响 agys 启动的子进程，不改系统代理）**

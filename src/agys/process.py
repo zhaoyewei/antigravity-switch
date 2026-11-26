@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import json
+import locale
 import os
 import subprocess
 import sys
@@ -25,6 +26,22 @@ def _names():
     return [s.strip() for s in paths().process_names.split(",") if s.strip()]
 
 
+def _decode(raw) -> str:
+    """子进程输出解码。
+
+    不能依赖 text=True：PYTHONUTF8=1 或 Python 3.15+ 默认 UTF-8 模式时，
+    Windows 的 tasklist 输出（本地代码页）会在 reader 线程里解码失败。
+    """
+    if not raw:
+        return ""
+    for enc in ("utf-8", locale.getpreferredencoding(False), "gbk", "cp1252"):
+        try:
+            return raw.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("utf-8", "replace")
+
+
 def list_procs():
     """返回进程列表；检测工具不可用返回 None。"""
     names = _names()
@@ -33,11 +50,11 @@ def list_procs():
     try:
         if IS_WIN:
             r = subprocess.run(["tasklist", "/FO", "CSV", "/NH", "/V"],
-                               capture_output=True, text=True, timeout=20)
+                               capture_output=True, timeout=20)
             if r.returncode != 0:
                 return None
             out = []
-            for row in csv.reader(r.stdout.splitlines()):
+            for row in csv.reader(_decode(r.stdout).splitlines()):
                 if len(row) < 2:
                     continue
                 name, pid = row[0].strip(), row[1].strip()
@@ -50,17 +67,17 @@ def list_procs():
             return out
         out = []
         for n in names:
-            r = subprocess.run(["pgrep", "-x", n], capture_output=True, text=True, timeout=15)
+            r = subprocess.run(["pgrep", "-x", n], capture_output=True, timeout=15)
             if r.returncode != 0:
                 continue
-            for line in r.stdout.split():
+            for line in _decode(r.stdout).split():
                 try:
                     pid = int(line)
                 except ValueError:
                     continue
                 ps = subprocess.run(["ps", "-p", str(pid), "-o", "args="],
-                                    capture_output=True, text=True, timeout=10)
-                out.append(Proc(pid, n, "", ps.stdout.strip()))
+                                    capture_output=True, timeout=10)
+                out.append(Proc(pid, n, "", _decode(ps.stdout).strip()))
         return out
     except Exception:
         return None

@@ -15,6 +15,9 @@ IS_WIN = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
 IS_LINUX = not IS_WIN and not IS_MAC
 
+# agy 在系统凭据库里的默认条目名。布局自动发现以它为基线做候选枚举。
+DEFAULT_CRED_TARGET = "gemini:antigravity"
+
 
 @dataclass(frozen=True)
 class Paths:
@@ -45,6 +48,23 @@ def _env(name, default):
     return default if v is None else v
 
 
+# layout 自动适配写入的路径覆盖（进程级，不写进环境变量，避免污染子进程）
+_OVERRIDES: dict = {}
+
+
+def set_overrides(d=None):
+    _OVERRIDES.clear()
+    if d:
+        for key in ("cred_target", "ga", "linux_token"):
+            value = d.get(key)
+            if value:
+                _OVERRIDES[key] = value
+
+
+def get_overrides():
+    return dict(_OVERRIDES)
+
+
 def paths() -> Paths:
     user = os.path.expanduser("~")
     home = _env("AGYS_HOME", os.path.join(user, ".agy-accounts"))
@@ -64,9 +84,11 @@ def paths() -> Paths:
         key_file=os.path.join(home, ".vault.key"),
         memory_file=_env("AGYS_MEMORY_FILE", os.path.join(home, "memory_credential.json")),
         reopen=os.path.join(home, "reopen.json"),
-        ga=os.path.join(gemini, "google_accounts.json"),
-        linux_token=os.path.join(gemini, "antigravity-cli", "antigravity-oauth-token"),
-        cred_target=_env("AGYS_CRED_TARGET", "gemini:antigravity"),
+        ga=_OVERRIDES.get("ga") or os.path.join(gemini, "google_accounts.json"),
+        linux_token=(_OVERRIDES.get("linux_token")
+                     or os.path.join(gemini, "antigravity-cli", "antigravity-oauth-token")),
+        cred_target=(_env("AGYS_CRED_TARGET", None)
+                     or _OVERRIDES.get("cred_target") or DEFAULT_CRED_TARGET),
         cred_user=_env("AGYS_CRED_USER", "antigravity"),
         no_encrypt=os.environ.get("AGYS_NO_ENCRYPT") == "1",
         backend=_env("AGYS_BACKEND", "auto"),

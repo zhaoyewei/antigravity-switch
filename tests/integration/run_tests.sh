@@ -83,7 +83,7 @@ contains "rename 生效" "$($AGYS list)" "alice-main"
 contains "审计日志有记录" "$($AGYS log -n 50)" "switch"
 contains "layout 输出指纹" "$($AGYS layout)" "fingerprint"
 contains "doctor 输出加密方式" "$($AGYS doctor)" "加密"
-contains "version" "$($AGYS version)" "0.4.0"
+contains "version" "$($AGYS version)" "0.5.0"
 contains "--json doctor" "$($AGYS --json doctor)" '"ok": true'
 
 echo "== 5b. 扩展命令（status / whoami / ids / info / default / 别名 / help / 补全 / 自检修复 / 备份 / 登出） =="
@@ -126,6 +126,44 @@ rm -f "$T/stub-env.json"
 AGYS_STUB_BLOB="$BLOB_ALICE2" AGYS_STUB_EMAIL=alice@gmail.com $AGYS as alice-main >/dev/null 2>&1
 not_contains "clear 后不再注入配置的代理" "$(cat "$T/stub-env.json" 2>/dev/null)" "127.0.0.1:7890"
 
+echo "== 5d. history（会话历史，跨帐号共享） =="
+"$PY" - "$AGYS_GEMINI_HOME" << 'PYEOF'
+import os, sqlite3, sys
+base = os.path.join(sys.argv[1], "antigravity-cli")
+os.makedirs(os.path.join(base, "conversations"), exist_ok=True)
+c = sqlite3.connect(os.path.join(base, "conversation_summaries.db"))
+c.execute("create table conversation_summaries (conversation_id text, title text,"
+          " preview text, step_count integer, last_modified_time datetime,"
+          " workspace_uris text, project_id text, status text)")
+c.execute("insert into conversation_summaries values (?,?,?,?,?,?,?,?)",
+          ("itest-1", "", "集成测试会话", 3, "2026-07-18 02:28:54+00:00",
+           '["file:///C:/Users/zhao"]', "", ""))
+c.commit(); c.close()
+d = sqlite3.connect(os.path.join(base, "conversations", "itest-1.db"))
+d.execute("create table steps (idx integer primary key, step_type integer,"
+          " status integer, render_info blob, step_payload blob)")
+d.execute("insert into steps values (0,14,0,null,?)", (b"Search for codex",))
+d.commit(); d.close()
+PYEOF
+contains "history 列出会话" "$($AGYS history)" "集成测试会话"
+contains "history 说明共享" "$($AGYS history)" "所有帐号共用"
+contains "history 搜索命中" "$($AGYS history --search 集成)" "itest-1"
+contains "history show 步骤摘要" "$($AGYS history show itest-1)" "Search for codex"
+$AGYS history export "$T/hist.json" >/dev/null
+contains "history 导出 json" "$(cat "$T/hist.json")" '"kind": "history"'
+$AGYS history export "$T/hist.md" --format md --detail >/dev/null
+contains "history 导出 md" "$(cat "$T/hist.md")" "所有帐号共用"
+
+echo "== 5e. TUI 非交互保护 =="
+contains "use 无参回落到默认帐号" "$($AGYS use 2>&1)" "已切换到"
+contains "tui 非交互下报错" "$($AGYS tui 2>&1)" "用法：agys use"
+
+echo "== 5f. import 冲突策略 =="
+$AGYS export "$T/conflict.json" >/dev/null
+contains "on-conflict skip" "$($AGYS import "$T/conflict.json" --on-conflict skip)" "跳过"
+contains "on-conflict rename" "$($AGYS import "$T/conflict.json" --on-conflict rename)" "alice-main-2"
+contains "JSON 报告策略" "$($AGYS --json import "$T/conflict.json" --on-conflict skip)" '"on_conflict": "skip"'
+
 echo "== 6. export / import（校验和） =="
 contains "导出含校验和" "$(cat "$EXPORT")" '"checksum"'
 AGYS_HOME="$T/home2" AGYS_MEMORY_FILE="$T/home2/memory_credential.json" \
@@ -140,11 +178,14 @@ open(p, "w", encoding="utf-8").write(json.dumps(d))
 PYEOF
 if $AGYS import "$EXPORT" >/dev/null 2>&1; then FAIL=$((FAIL+1)); echo "  FAIL: 篡改文件应被拒绝"; else PASS=$((PASS+1)); echo "  ok: 篡改文件被拒绝"; fi
 
-echo "== 7. 布局变化拒绝切换 =="
+echo "== 7. 布局自动发现与自动兼容 =="
+contains "layout --discover 列出候选" "$($AGYS layout --discover)" "候选布局"
 OUT=$(AGYS_CRED_TARGET="gemini:changed" $AGYS use bob 2>&1)
-contains "拒绝切换提示" "$OUT" "存储布局变化"
+contains "环境变量指定的位置直接采纳" "$OUT" "环境变量"
+contains "切换仍然成功" "$OUT" "已切换到"
+contains "layout --adopt 可执行" "$($AGYS layout --adopt)" "布局"
 AGYS_CRED_TARGET="gemini:changed" $AGYS use bob --allow-layout-change >/dev/null
-PASS=$((PASS+1)); echo "  ok: --allow-layout-change 可放行"
+PASS=$((PASS+1)); echo "  ok: --allow-layout-change 仍可强制放行"
 
 echo "== 8. remove（确认 + 登出） =="
 if $AGYS remove bob >/dev/null 2>&1; then FAIL=$((FAIL+1)); echo "  FAIL: 无 --yes 应拒绝"; else PASS=$((PASS+1)); echo "  ok: 无 --yes 被拒绝"; fi

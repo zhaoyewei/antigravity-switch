@@ -8,7 +8,7 @@ import tarfile
 import tempfile
 import time
 
-from . import agy_install, audit, doctor, identity, journal, proxy
+from . import agy_install, audit, doctor, history, identity, journal, proxy
 from .common import AgysError, SwitchLock, confirm, read_ga, write_ga
 from .config import paths
 from .crypto import secure_dir
@@ -19,7 +19,7 @@ from .vault import (
 
 COMMANDS = ("add list current use as switch run ls alias rename remove rm export "
             "import log layout doctor version update init status whoami logout "
-            "info default completion backup restore check proxy help ids").split()
+            "info default completion backup restore check proxy history tui help ids").split()
 
 TOPICS = {
     "commands": """常用命令
@@ -30,6 +30,8 @@ TOPICS = {
   agys as <帐号> [参数]  切换并以该帐号启动 agy，参数透传
   agys status            一行状态概览
   agys whoami            输出当前活跃邮箱（适合脚本）
+  agys tui               交互式选择帐号并切换（use 省略帐号也会进入）
+  agys history           查看会话历史（所有帐号共用同一份，不按帐号分区）
   agys info <帐号>       查看帐号详情与 token 有效期
   agys logout            登出但保留所有帐号
   agys doctor            环境自检；--fix 自动修复
@@ -46,8 +48,7 @@ TOPICS = {
   整机备份      agys backup → ~/.agy-accounts/backups/…tar.gz
   升级          agys update  /  agys check""",
     "troubleshooting": """排障
-  切换不生效    先 agys doctor；若布局指纹变化，agys layout 对比后用
-                --allow-layout-change 接受（仅在你确认 agy 升级过之后）
+  切换不生效    先 agys doctor；布局会自动适配，仍报错看 agys layout --discover
   切换被拒绝    有 agy 进程在跑；用 --close-all 自动关闭后切换，或手动退出
   凭据未纳管    agys current 会标红；下次 use/add 会自动收录
   找不到 agy    agys init 会自动用官方脚本安装；也可设置 AGYS_AGY_BIN
@@ -116,10 +117,15 @@ def cmd_status(args, rep, store, v):
             f"({consistent}) | 帐号 {d['vault']['accounts']} | 进程 {nproc} | "
             f"加密 {d['encryption']} | agy {d['agy_version']}")
     rep.msg(line)
+    hist = history.overview()
+    if hist:
+        rep.msg(f"会话历史 {hist['total']} 个（所有帐号共享）"
+                + (f"，其中 {hist['orphan']} 个孤立" if hist["orphan"] else "")
+                + (f"，最近 {hist['latest']}" if hist["latest"] else ""))
     rep.set(current=d["vault"]["current"], active_identity=d["credential_identity"],
             consistent=consistent == "一致", accounts=d["vault"]["accounts"],
             running_processes=nproc, encryption=d["encryption"],
-            agy_version=d["agy_version"], warnings=d["warnings"])
+            agy_version=d["agy_version"], history=hist, warnings=d["warnings"])
 
 
 def cmd_whoami(args, rep, store, v):

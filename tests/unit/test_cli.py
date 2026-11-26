@@ -33,17 +33,31 @@ def test_add_switch_and_current(sandbox, monkeypatch, capsys, blob_alice, blob_b
     assert out["active_identity"] == "email:alice@gmail.com"
 
 
-def test_layout_change_refused_unless_allowed(sandbox, monkeypatch, capsys,
-                                               blob_alice, blob_bob):
+def test_layout_change_with_env_is_adopted(sandbox, monkeypatch, capsys,
+                                           blob_alice, blob_bob):
+    """环境变量显式改了凭据条目名：属于用户配置，自动采纳并继续切换。"""
     _login(monkeypatch, blob_alice, "alice@gmail.com")
     assert main(["add", "alice"]) == 0
     _login(monkeypatch, blob_bob, "bob@gmail.com")
     assert main(["add", "bob"]) == 0
     monkeypatch.setenv("AGYS_CRED_TARGET", "gemini:changed")
     capsys.readouterr()
-    assert main(["use", "alice"]) == 1
-    assert "存储布局变化" in capsys.readouterr().err
-    assert main(["use", "alice", "--allow-layout-change"]) == 0
+    assert main(["use", "alice"]) == 0
+    assert "环境变量" in capsys.readouterr().out
+
+
+def test_version_bump_does_not_block_switch(sandbox, monkeypatch, capsys,
+                                            blob_alice, blob_bob):
+    """agy 升级只改版本号时，不该拦住切换。"""
+    from agys import layout
+    _login(monkeypatch, blob_alice, "alice@gmail.com")
+    assert main(["add", "alice"]) == 0
+    _login(monkeypatch, blob_bob, "bob@gmail.com")
+    assert main(["add", "bob"]) == 0
+    monkeypatch.setattr(layout, "agy_version", lambda: "agy 99.0.0")
+    capsys.readouterr()
+    assert main(["use", "alice"]) == 0
+    assert "存储结构未变" in capsys.readouterr().out
 
 
 def test_alias_and_resolve(sandbox, monkeypatch, capsys, blob_alice):

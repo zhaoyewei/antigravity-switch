@@ -61,12 +61,18 @@ agys add work --alias primary --alias office
 
 ### `use` / `switch <帐号>`
 
-切换帐号。省略 `<帐号>` 时：交互终端会给出编号选择器；非交互 / `--json` 场景下若设置了默认帐号则切到默认帐号。
+切换帐号。省略 `<帐号>` 时：交互终端进入 TUI 选择器；非交互 / `--json` 场景下若设置了默认帐号则切到默认帐号，否则明确报错。
 
 ```bash
 agys use work
 agys switch work --close-all
+agys use                 # 打开 TUI 选择器
 ```
+
+### `tui`
+
+独立的交互式选择器：方向键移动、`1-9` 跳转、`Enter` 切换、`q` 取消。
+纯标准库实现，不依赖 `curses`；非交互终端会直接报错。
 
 ### `as` / `run <帐号> [--] [agy 参数...]`
 
@@ -142,10 +148,24 @@ agys export /tmp/migration.json
 
 > 迁移完成后请删除导出文件；refresh token 会被 Google 轮换，两台机器同时使用同一份凭据会互相踢下线。
 
-### `import <文件> [--no-verify]`
+### `import <文件> [--no-verify] [--on-conflict ...]`
 
 导入导出文件，校验 SHA-256（可用 `--no-verify` 跳过），兼容 v0.1 格式。
-**导入不会自动切换**，需再执行 `agys use <id>`。同 id 会被更新。
+**导入不会自动切换**，需再执行 `agys use <id>`。
+
+id 已存在时按 `--on-conflict` 处理：
+
+| 取值 | 行为 |
+|---|---|
+| `overwrite`（默认） | 覆盖现有帐号，保持与旧版本一致 |
+| `skip` | 保留现有帐号，跳过这一条 |
+| `rename` | 换个不冲突的 id 并存（`alice` → `alice-2` → `alice-3`…） |
+| `ask` | 逐个询问；非交互终端下会报错，可加 `--yes` 表示全部覆盖 |
+
+```bash
+agys import backup.json --on-conflict skip
+agys import backup.json --on-conflict ask --yes
+```
 
 ### `backup [路径]`
 
@@ -167,6 +187,8 @@ agys export /tmp/migration.json
 | `doctor` | 完整环境自检：平台、路径、加密方式、agy 版本、凭据库、布局、各 profile、运行中进程、警告 |
 | `doctor --fix` | 在自检后自动修复：迁移 v0.1 明文 profile、回滚未完成事务、修复 vault 索引（补入孤立 profile / 移除损坏项）、收紧目录权限 |
 | `layout` | 显示当前 agy 存储布局探测结果与缓存指纹的差异 |
+| `layout --discover` | 列出所有候选布局（凭据条目 / 状态文件 / token 路径），只读探测 |
+| `layout --adopt` | 自动发现并采纳可用布局；没有更合适的候选时把当前布局记为基准 |
 | `log [-n 数量]` | 查看 JSONL 审计日志（默认 20 条），只含元数据不含 token |
 | `check` | 显示当前版本、查询仓库最新版本（离线时跳过）、快速自检提示数 |
 | `version` | 显示版本 |
@@ -175,10 +197,43 @@ agys export /tmp/migration.json
 ```bash
 agys doctor
 agys doctor --fix
-agys layout
+agys layout --discover
 agys check
 agys update --check
 ```
+
+---
+
+## 会话历史
+
+agy 的本地历史**不按帐号分区**：`~/.gemini/antigravity-cli/` 下的
+`conversation_summaries.db`、`conversations/<uuid>.db`、`history.jsonl` 里
+没有任何 account / email / user 字段，云端也没有会话列表接口。
+所以切换帐号不会换出一套历史——所有帐号天然共用同一份。
+
+`agys history` 只读，不修改任何 agy 文件。
+
+| 用法 | 作用 |
+|---|---|
+| `history` | 列出所有会话（按最后修改时间倒序） |
+| `history -n 50` | 只看最近 50 条 |
+| `history --search 关键词` | 在标题 / preview / workspace / id 里过滤 |
+| `history --workspace D:/work` | 按 workspace 路径过滤 |
+| `history --no-orphans` | 隐藏摘要库里没有记录的孤立会话 |
+| `history show <id 前缀>` | 会话详情 + 步骤摘要（`--steps N` 控制条数） |
+| `history export <路径>` | 导出；`--format json\|md`、`--detail` 附带步骤摘要 |
+
+```bash
+agys history
+agys history --search 论文
+agys history show 5520
+agys history export ~/Desktop/hist.md --format md --detail
+```
+
+输出里 `?` 标记表示该会话不在摘要库中、仅从会话文件推断（可能已被清理）。
+
+列表字段来自 `conversation_summaries` 表；正文是 protobuf blob，无法逐字还原，
+`show` / `export --detail` 给出的是从 blob 中提取的可读摘要（优先中文原文）。
 
 ---
 
@@ -242,7 +297,7 @@ agys completion powershell >> $PROFILE
 | `--close-all` | 自动关闭运行中的 agy 进程后再切换，切换完尽力重开 |
 | `--no-guard` | 不检测 / 不关闭进程，强制切换（风险自负） |
 | `--yes` | 跳过交互确认 |
-| `--allow-layout-change` | 接受 agy 存储布局变化并更新指纹（仅在你确认 agy 升级过后使用） |
+| `--allow-layout-change` | 跳过自动发现，直接把当前布局记为基准（确认 agy 换了位置时用） |
 
 ---
 

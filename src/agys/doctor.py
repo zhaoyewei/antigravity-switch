@@ -58,6 +58,14 @@ def collect(store):
         warnings.append("存在未完成事务（下次启动会自动回滚）")
     if p.no_encrypt:
         warnings.append("AGYS_NO_ENCRYPT=1：本地凭据以明文存储")
+    cached_layout = v.get("layout") or {}
+    if cached_layout and cached_layout.get("fingerprint") != layout["fingerprint"]:
+        warnings.append("存储布局指纹与缓存不一致（升级后首次写入时可能自动适配，"
+                        "也可运行 agys layout --discover 查看候选）")
+    if live and not (layout["token_exists"] if layout["backend"] == "linux"
+                     else layout["ga_exists"]):
+        warnings.append("有活跃凭据但状态文件不存在，agy 可能已换存储位置"
+                        "（运行 agys layout --discover 查看候选）")
     return {
         "version": __version__,
         "platform": sys.platform,
@@ -75,8 +83,7 @@ def collect(store):
         "credential_matches": matched,
         "google_accounts_active": (_read_ga() or {}).get("active"),
         "vault": {"accounts": len(v["accounts"]), "current": v.get("current"),
-                  "layout_fingerprint": (v.get("layout") or {}).get("fingerprint")},
-        "layout": layout,
+                  "layout_fingerprint": (v.get("layout") or {}).get("fingerprint")},        "layout": layout,
         "profiles": profiles,
         "pending_transaction": os.path.isfile(p.pending),
         "running_processes": None if procs is None else [x.__dict__ for x in procs],

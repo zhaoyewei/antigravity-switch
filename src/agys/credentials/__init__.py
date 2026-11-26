@@ -33,26 +33,44 @@ class CredentialStore(ABC):
         return self.name
 
 
-def get_store() -> CredentialStore:
+def resolve_backend(name=None) -> str:
     p = paths()
-    backend = p.backend
+    backend = name or p.backend
     if backend == "auto":
         backend = "windows" if IS_WIN else "macos" if IS_MAC else "linux"
+    return backend
+
+
+def build_store(backend=None, cred_target=None, cred_user=None,
+                token_path=None, memory_file=None) -> CredentialStore:
+    """按显式参数构造存储。
+
+    布局自动发现时要试探「候选位置」，不能改动全局覆盖，所以留出这个入口；
+    参数缺省时回落到 paths() 的当前值。
+    """
+    p = paths()
+    backend = resolve_backend(backend)
+    cred_target = cred_target or p.cred_target
+    cred_user = cred_user or p.cred_user
     if backend == "memory":
         from .memory import MemoryStore
-        return MemoryStore(p.memory_file)
+        return MemoryStore(memory_file or p.memory_file)
     if backend == "windows":
         if not IS_WIN:
             raise CredentialError("windows 后端只能在 Windows 上使用")
         from .windows import WindowsStore
-        return WindowsStore(p.cred_target, p.cred_user)
+        return WindowsStore(cred_target, cred_user)
     if backend == "macos":
         from .macos import MacStore
-        return MacStore(p.cred_target, p.cred_user)
+        return MacStore(cred_target, cred_user)
     if backend == "linux":
         from .linux import LinuxStore
-        return LinuxStore(p.linux_token)
+        return LinuxStore(token_path or p.linux_token)
     raise CredentialError(f"未知凭据后端: {backend}")
+
+
+def get_store() -> CredentialStore:
+    return build_store()
 
 
 __all__ = ["CredentialStore", "CredentialError", "get_store"]

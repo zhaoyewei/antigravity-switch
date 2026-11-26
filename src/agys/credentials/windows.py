@@ -67,3 +67,24 @@ class WindowsStore(CredentialStore):
             err = ctypes.get_last_error()
             if err != ERROR_NOT_FOUND:
                 raise CredentialError(f"CredDeleteW 失败 (winerror={err})")
+
+
+def list_targets(filter_prefix=None):
+    """枚举凭据条目名（只读 TargetName，不读取 blob）。"""
+    count = wt.DWORD(0)
+    pcreds = ctypes.POINTER(ctypes.POINTER(_CREDENTIAL))()
+    if not _advapi.CredEnumerateW(filter_prefix, 0, ctypes.byref(count),
+                                  ctypes.byref(pcreds)):
+        err = ctypes.get_last_error()
+        if err == ERROR_NOT_FOUND:
+            return []
+        raise CredentialError(f"CredEnumerateW 失败 (winerror={err})")
+    try:
+        out = []
+        for i in range(count.value):
+            cred = pcreds[i][0]
+            if cred.TargetName:
+                out.append(cred.TargetName)
+        return out
+    finally:
+        _advapi.CredFree(pcreds)
