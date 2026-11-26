@@ -1,3 +1,4 @@
 #!/usr/bin/env sh
-# agys macOS/Linux 启动器：chmod +x 后把本目录加入 PATH
-exec python3 "$(dirname "$0")/agys.py" "$@"
+# 开发用启动器（仓库内）：把 src 加入 PYTHONPATH 后运行包
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m agys "$@"

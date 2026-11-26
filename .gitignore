@@ -1,4 +1,18 @@
+# local sandboxes / build artifacts
 .t/
+.test-sandbox/
+.install-test/
 __pycache__/
-*.pyc
+*.py[cod]
 *.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+.venv/
+venv/
+
+# runtime secrets (never commit)
+.vault.key
+memory_credential.json

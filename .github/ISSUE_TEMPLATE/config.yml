@@ -1,0 +1,13 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全问题（请勿公开提交）
+    url: https://github.com/zhaoyewei/antigravity-switch/security/advisories/new
+    about: 安全漏洞请走私有通道，不要开公开 issue
+
+  - name: 排障指南
+    url: https://github.com/zhaoyewei/antigravity-switch/blob/main/docs/TROUBLESHOOTING.md
+    about: 提交前先看这里，多数常见问题已有解答
+
+  - name: 命令参考
+    url: https://github.com/zhaoyewei/antigravity-switch/blob/main/docs/COMMANDS.md
+    about: 完整命令、参数与环境变量说明

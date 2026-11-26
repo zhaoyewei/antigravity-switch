@@ -1,0 +1,79 @@
+name: Bug 报告
+description: 报告 agys 的异常行为
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！提交前请先阅读 [排障指南](../../docs/TROUBLESHOOTING.md)。
+        **请勿粘贴任何 token、导出文件、备份文件或未脱敏的 doctor 输出。**
+
+  - type: input
+    id: version
+    attributes:
+      label: agys 版本
+      placeholder: "0.3.0（运行 agys version）"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: 操作系统
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - WSL
+        - 其它
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python 版本
+      placeholder: "3.11.9"
+
+  - type: input
+    id: agy
+    attributes:
+      label: agy 版本
+      placeholder: "1.1.4（agys doctor 中可见）"
+
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么
+      description: 期望行为与实际行为分别是什么？
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. agys add work
+        2. agys use work
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: agys doctor 输出（已脱敏）
+      description: 请删除本机路径、邮箱等个人信息
+      render: text
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 确认
+      options:
+        - label: 我已阅读过 docs/TROUBLESHOOTING.md
+          required: true
+        - label: 粘贴的内容不含任何凭据、token 或未脱敏的个人信息
+          required: true

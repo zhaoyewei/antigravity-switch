@@ -1,0 +1,28 @@
+# 可选：pip install pre-commit && pre-commit install
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+      - id: mixed-line-ending
+        args: [--fix=lf]
+        exclude: \.(cmd|bat)$
+
+  - repo: local
+    hooks:
+      - id: agys-compile
+        name: compile python sources
+        entry: python -m compileall -q src/agys
+        language: system
+        pass_filenames: false
+        types: [python]
+      - id: agys-unit-tests
+        name: unit tests (memory backend)
+        entry: python -m pytest -q
+        language: system
+        pass_filenames: false
+        types: [python]

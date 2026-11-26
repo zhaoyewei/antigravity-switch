@@ -1,4 +1,7 @@
 @echo off
-rem agys launcher for Windows. Add this directory to PATH, or call agys.cmd directly.
-python "%~dp0agys.py" %*
-if errorlevel 1 exit /b %errorlevel%
+rem development launcher: run the agys package from this repo
+setlocal
+set "AGYS_ROOT=%~dp0"
+set "PYTHONPATH=%AGYS_ROOT%src;%PYTHONPATH%"
+python -m agys %*
+endlocal & exit /b %errorlevel%
