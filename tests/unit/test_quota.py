@@ -338,3 +338,13 @@ def test_auto_falls_back_to_trying_when_probe_fails(sandbox, monkeypatch, capsys
     captured = capsys.readouterr()
     assert "网络或代理" in captured.err
     assert "已切到 'alice'" in captured.out
+
+
+def test_pad_counts_wide_chars():
+    """中文按 2 列算，否则状态表会歪。"""
+    from agys.common import disp_width, pad
+    assert disp_width("可用") == 4
+    assert disp_width("ok") == 2
+    assert pad("可用", 8) == "可用    "
+    assert pad("ok", 4) == "ok  "
+    assert pad("超出宽度", 2) == "超出宽度"      # 只补不砍

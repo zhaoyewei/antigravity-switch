@@ -315,10 +315,15 @@ def mark(acc_id, state, detail):
     save_cache(cache)
 
 
-def describe(report):
-    """一行人类可读描述。"""
-    label = STATE_LABEL.get(report.get("state"), report.get("state") or "?")
+def label(report):
+    """状态标签本身（不含说明），用于表格列。"""
+    text = STATE_LABEL.get(report.get("state"), report.get("state") or "?")
     if isinstance(report.get("remaining"), (int, float)):
-        label += f" {report['remaining'] * 100:.0f}%"
+        text += f" {report['remaining'] * 100:.0f}%"
+    return text
+
+
+def describe(report):
+    """一行人类可读描述（标签 + 说明），用于警告与单行输出。"""
     detail = report.get("detail") or ""
-    return f"{label}" + (f"（{detail}）" if detail else "")
+    return label(report) + (f"（{detail}）" if detail else "")

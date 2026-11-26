@@ -11,7 +11,7 @@ import sys
 import time
 
 from .. import APP, quota, tui
-from ..common import AgysError, SwitchLock
+from ..common import AgysError, SwitchLock, pad
 from ..runtime import (
     launch, pick_account, resolve_or_pick, switch_if_needed, switch_to,
 )
@@ -64,21 +64,19 @@ def cmd_as(args, rep, store, v):
 # ---------------------------------------------------------------- auto
 
 def _render_status(rep, reports, v):
-    """把各帐号的探测结果排成表。"""
+    """把各帐号的探测结果排成表（按显示宽度对齐，中文列不会歪）。"""
     current = v.get("current")
     rep.msg(f"{APP}: 帐号额度与可用性（按优先级排序）")
-    head = f"  {'':2} {'ID':<18} {'STATUS':<22} {'EMAIL':<28} 说明"
-    rep.msg(head)
+    rep.msg(f"  {'':2} {pad('ID', 18)} {pad('状态', 16)} {pad('邮箱', 26)} 说明")
     for r in reports:
         mark = "*" if r["id"] == current else " "
-        status = quota.describe(r)
-        rep.msg(f"  {mark:2} {r['id']:<18} {status:<22} "
-                f"{(r.get('email') or '-'):<28} {r.get('detail') or ''}")
+        rep.msg(f"  {mark:2} {pad(r['id'], 18)} {pad(quota.label(r), 16)} "
+                f"{pad(r.get('email') or '-', 26)} {r.get('detail') or ''}")
     if any(r.get("state") == "unknown" for r in reports):
         rep.msg("  「额度未知」= 该帐号没有可查询的配额包（免费帐号），"
                 "已通过健康探针确认凭据可用")
     rep.msg("  提示：额度数据来自 Antigravity 的配额接口，免费帐号不提供百分比；"
-            "缓存 5 分钟，agys auto --status --offline 只看缓存")
+            "缓存 5 分钟，加 --offline 只看缓存")
 
 
 def _probe_after_failure(acc_id, rep):

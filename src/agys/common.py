@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import unicodedata
 
 from . import APP
 from .config import paths
@@ -12,6 +13,18 @@ from .crypto import secure_dir, secure_write
 
 class AgysError(Exception):
     pass
+
+
+def disp_width(text):
+    """终端显示宽度：CJK 全角字符占 2 列，`len()` 会把表算歪。"""
+    return sum(2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+               for ch in str(text))
+
+
+def pad(text, width):
+    """按显示宽度右填空格（截断交给调用方，这里只补不砍）。"""
+    text = str(text)
+    return text + " " * max(0, width - disp_width(text))
 
 
 class Reporter:
