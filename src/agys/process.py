@@ -8,6 +8,7 @@ import subprocess
 import sys
 from dataclasses import dataclass, asdict
 
+from . import proxy
 from .config import IS_WIN, agy_argv, paths
 from .crypto import secure_dir, secure_write
 
@@ -111,7 +112,8 @@ def reopen_previous():
             break
         try:
             subprocess.Popen(cmd, stdin=subprocess.DEVNULL,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             env=proxy.child_env())
             n += 1
         except Exception:
             pass

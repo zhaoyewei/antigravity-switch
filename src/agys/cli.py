@@ -9,7 +9,7 @@ import sys
 import tempfile
 
 from . import __version__, audit, doctor, expimp, identity, journal, layout, process
-from . import APP, agy_install, extra
+from . import APP, agy_install, extra, proxy
 from .common import AgysError, Reporter, SwitchLock, confirm, read_ga, write_ga
 from .config import agy_argv, paths
 from .credentials import CredentialError, get_store
@@ -193,7 +193,7 @@ def cmd_add(args, rep, store, v):
         rep.msg(f"{APP}: 即将启动 agy 登录流程，请在浏览器中完成 Google 登录，"
                 f"登录完成后退出 agy（Ctrl+C 或 /quit）。")
         try:
-            subprocess.call(b)
+            subprocess.call(b, env=proxy.child_env())
         except KeyboardInterrupt:
             pass
         new = store.get()
@@ -312,7 +312,7 @@ def cmd_as(args, rep, store, v):
     if not cmd:
         raise AgysError("找不到 agy 可执行文件（可用 AGYS_AGY_BIN 指定）")
     rep.done()
-    rc = subprocess.call(cmd)
+    rc = subprocess.call(cmd, env=proxy.child_env())
     sys.exit(rc)
 
 
@@ -457,11 +457,10 @@ def cmd_update(args, rep, store, v):
     url = os.environ.get("AGYS_INSTALL_URL") or (
         f"https://raw.githubusercontent.com/{owner}/antigravity-switch/main/install.sh")
     if args.check:
-        import urllib.request
         init = (f"https://raw.githubusercontent.com/{owner}/antigravity-switch/main/"
                 "src/agys/__init__.py")
         try:
-            with urllib.request.urlopen(init, timeout=15) as r:
+            with proxy.urlopen(init, timeout=15) as r:
                 text = r.read().decode("utf-8")
             latest = text.split('__version__ = "')[1].split('"')[0]
         except Exception as e:
@@ -469,9 +468,8 @@ def cmd_update(args, rep, store, v):
         rep.msg(f"当前 {__version__}，仓库最新 {latest}")
         rep.set(current=__version__, latest=latest)
         return
-    import urllib.request
     try:
-        with urllib.request.urlopen(url, timeout=30) as r:
+        with proxy.urlopen(url, timeout=30) as r:
             script = r.read()
     except Exception as e:
         raise AgysError(f"下载安装脚本失败：{e}")
@@ -479,7 +477,7 @@ def cmd_update(args, rep, store, v):
     with os.fdopen(fd, "wb") as f:
         f.write(script)
     try:
-        rc = subprocess.call(["bash", tmp])
+        rc = subprocess.call(["bash", tmp], env=proxy.child_env())
     finally:
         try:
             os.unlink(tmp)
@@ -621,6 +619,20 @@ def build_parser():
     sp.set_defaults(func=extra.cmd_restore)
 
     sub.add_parser("check", help="检查新版本并做快速自检").set_defaults(func=extra.cmd_check)
+
+    sp = sub.add_parser("proxy", help="配置 agy 子进程使用的代理（不改系统代理）")
+    psub = sp.add_subparsers(dest="proxy_cmd")
+    psub.add_parser("show", help="查看当前代理配置与来源").set_defaults(func=extra.cmd_proxy)
+    pset = psub.add_parser("set", help="设置代理，例如 http://127.0.0.1:7890")
+    pset.add_argument("url", help="代理地址（http / https / socks5）")
+    pset.add_argument("--no-proxy",
+                      help="NO_PROXY 列表（逗号分隔），默认追加 localhost/127.0.0.1/::1")
+    pset.set_defaults(func=extra.cmd_proxy)
+    psub.add_parser("clear", help="清除代理配置").set_defaults(func=extra.cmd_proxy)
+    ptest = psub.add_parser("test", help="测试代理连通性")
+    ptest.add_argument("url", nargs="?", help="要测试的代理；缺省用当前配置")
+    ptest.set_defaults(func=extra.cmd_proxy)
+    sp.set_defaults(func=extra.cmd_proxy)
 
     sp = sub.add_parser("help", help="查看内置帮助主题")
     sp.add_argument("topic", nargs="?", choices=sorted(extra.TOPICS),

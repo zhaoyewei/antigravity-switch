@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.0
+
+**代理支持（只影响 agys 启动的子进程，不改系统代理）**
+- 新命令：`agys proxy set <url>` / `show` / `clear` / `test`，支持 http / https / socks5
+- 注入点：`add` / `as` 启动的 agy、`--close-all` 后重开的 agy、agy 安装脚本、
+  `update`，以及 `check` / `update --check` 的版本查询
+- 未配置代理时完全不注入，行为与之前一致
+- `NO_PROXY` 自动追加 `localhost,127.0.0.1,::1`，避免本地 language server 被代理
+- `AGYS_PROXY` 临时覆盖、`AGYS_NO_PROXY=1` 临时禁用
+- 配置写入 `~/.agy-accounts/config.json`（0600），`show` 输出会对密码打码
+- Windows 安装 agy 时额外设置 `DefaultWebProxy`（`irm` 不读环境变量代理）
+
 ## 0.3.0
 
 面向公开发布的一轮打磨：更像一个正式 repo，也更好用。

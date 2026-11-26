@@ -22,6 +22,7 @@ class Paths:
     gemini_home: str
     install_dir: str
     vault: str
+    config_file: str
     profiles: str
     lock: str
     pending: str
@@ -54,6 +55,7 @@ def paths() -> Paths:
         gemini_home=gemini,
         install_dir=install,
         vault=os.path.join(home, "vault.json"),
+        config_file=os.path.join(home, "config.json"),
         profiles=os.path.join(home, "profiles"),
         lock=os.path.join(home, ".switch.lock"),
         pending=os.path.join(home, "pending.json"),

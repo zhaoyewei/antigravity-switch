@@ -184,6 +184,29 @@ agys logout                       # 清除活跃凭据
 
 ---
 
+---
+
+## 13. 代理相关
+
+**agy 还是连不上 Google**：先 `agys proxy show` 确认代理已生效（来源应为 `config` 或
+`env:AGYS_PROXY`），再 `agys proxy test` 确认端口可连。注意 agys 只给自己启动的进程注入代理；
+你手动在别处打开的 agy 不受影响，需要 `AGYS_PROXY=http://127.0.0.1:7890 agy`。
+
+**代理对 agys 自身无效**：`socks5://` 只对 agy 与 curl 生效；`agys check` / `update --check`
+的版本查询走 urllib，不支持 socks，会自动退回直连。改用 http 代理即可全程生效。
+
+**清除后仍然走代理**：`proxy clear` 只是停止注入，子进程会继承你 shell 里已有的
+`HTTPS_PROXY` / `ALL_PROXY` 等变量。要彻底直连，用 `AGYS_NO_PROXY=1 agys as <帐号>`，
+或在干净的 shell 里运行。
+
+**Windows 上安装 agy 仍然超时**：agys 已为 `install.ps1` 额外设置 `DefaultWebProxy`
+（该命令不读环境变量代理）；仍失败时可用 `AGYS_AGY_INSTALL_CMD` 指定自定义安装命令。
+
+**代理地址写错端口**：`agys proxy set` 会立即做 TCP 连通性检测并告警，但配置仍会保存；
+改对后重新 `agys proxy set` 即可覆盖。
+
+---
+
 还解决不了？请开 issue 并附上（**已脱敏**的）`agys doctor` 输出、
 `agys --json doctor`、`agys version`、操作系统与 agy 版本。
 安全相关的问题请按 [SECURITY.md](../SECURITY.md) 私下报告。

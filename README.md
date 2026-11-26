@@ -93,9 +93,40 @@ agys as work -p "review this diff"   # 切换并以该帐号启动 agy，参数�
 | | `layout` / `log` / `check` | 布局指纹 / 审计日志 / 版本与自检 |
 | 维护 | `version` / `update` | 显示版本 / 重新运行安装脚本升级 |
 | | `completion <shell>` / `help [主题]` | 生成补全脚本 / 内置帮助 |
+| 网络 | `proxy set/show/clear/test` | 只给 agys 启动的进程配置代理 |
 
 全局参数：`--json`（结构化输出）、`--version`。
 切换类命令支持 `--close-all`、`--no-guard`、`--yes`、`--allow-layout-change`。
+
+---
+
+## 走代理（只影响 agys 启动的进程）
+
+```bash
+agys proxy set http://127.0.0.1:7890   # 保存并立即测连通性
+agys proxy show                        # 查看当前代理与来源
+agys proxy test                        # 只测连通性
+agys proxy clear                       # 不再注入（回落到父进程环境）
+```
+
+只会给这些子进程注入 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`：
+
+- `agys add` / `agys as` 启动的 agy
+- `--close-all` 切换后重开的 agy 窗口
+- agy 的安装脚本（`curl | bash` / `irm`）
+- `agys update`，以及 `agys check` / `update --check` 的版本查询
+
+**不修改系统代理，也不影响任何其它程序**；未配置时完全不注入，行为与之前一致。
+`NO_PROXY` 会自动包含 `localhost,127.0.0.1,::1`，避免 agy 访问本地 language server 时被代理。
+
+临时覆盖或禁用：
+
+```bash
+AGYS_PROXY=http://127.0.0.1:7890 agys as work   # 只这一次
+AGYS_NO_PROXY=1 agys as work                    # 这一次直连
+```
+
+支持 `http` / `https` / `socks5`（socks 对 agy 与 curl 生效，agys 自身的版本查询会退回直连）。
 
 ---
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import subprocess
 
+from . import proxy
 from .common import AgysError
 from .config import IS_WIN, agy_binary, paths
 
@@ -42,11 +43,20 @@ def official_commands():
     return [UNIX_CMD]
 
 
-def install_argv():
-    """返回 (展示用命令, argv)。"""
+def install_argv(proxy_url=None):
+    """返回 (展示用命令, argv)。
+
+    Windows 的 irm 不读环境变量里的代理，需要显式设置 DefaultWebProxy；
+    自定义 AGYS_AGY_INSTALL_CMD 时不自动加前缀，由使用者自行处理。
+    """
     override = os.environ.get("AGYS_AGY_INSTALL_CMD")
     if IS_WIN:
         cmd = override or WIN_PS_CMD
+        if proxy_url and not override:
+            ps = ("$p='" + proxy_url + "'; $env:HTTP_PROXY=$p; $env:HTTPS_PROXY=$p; "
+                  "[System.Net.WebRequest]::DefaultWebProxy="
+                  "New-Object System.Net.WebProxy($p); " + cmd)
+            return cmd, ["powershell", "-NoProfile", "-Command", ps]
         return cmd, ["powershell", "-NoProfile", "-Command", cmd]
     cmd = override or UNIX_CMD
     return cmd, ["bash", "-c", cmd]
@@ -67,10 +77,13 @@ def ensure(rep, *, auto=True):
     if os.environ.get("AGYS_NO_AUTO_INSTALL") == "1" or not auto:
         rep.warn("未检测到 agy；运行 agys init 会自动安装。\n" + _hint())
         return False
-    cmd, argv = install_argv()
+    proxy_url = proxy.current()
+    cmd, argv = install_argv(proxy_url)
+    if proxy_url:
+        rep.msg(f"agys: 安装过程将通过代理 {proxy.mask(proxy_url)}")
     rep.msg(f"agys: 未检测到 agy，正在使用官方安装脚本安装：\n  {cmd}")
     try:
-        rc = subprocess.call(argv, timeout=300)
+        rc = subprocess.call(argv, timeout=300, env=proxy.child_env())
     except FileNotFoundError:
         raise AgysError("找不到安装所需的 shell（bash / powershell）。\n" + _hint())
     except subprocess.TimeoutExpired:

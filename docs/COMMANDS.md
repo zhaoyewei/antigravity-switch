@@ -182,6 +182,30 @@ agys update --check
 
 ---
 
+## 代理
+
+只影响 agys 启动的子进程，**不修改系统代理**。配置保存在 `~/.agy-accounts/config.json`（权限 0600）。
+
+| 命令 | 说明 |
+|---|---|
+| `proxy show`（也是 `agys proxy` 的默认行为） | 显示当前生效的代理、来源（config / env）、NO_PROXY |
+| `proxy set <url>` | 设置并立即测试连通性；支持 `http` / `https` / `socks5` |
+| `proxy set <url> --no-proxy a,b` | 同时设置 NO_PROXY；`localhost,127.0.0.1,::1` 始终追加 |
+| `proxy test [url]` | 只测 TCP 连通性 |
+| `proxy clear` | 清除配置；不再注入，agy 继承父进程原有网络设置 |
+
+```bash
+agys proxy set 127.0.0.1:7890            # 自动补全为 http://
+agys proxy set socks5://127.0.0.1:7890
+agys proxy test
+agys proxy clear
+```
+
+注入范围：`add` / `as` 启动的 agy、`--close-all` 后重开的 agy、agy 安装脚本、
+`update`、`check`。未配置时不注入任何变量。
+
+---
+
 ## 脚本与集成
 
 ### `completion <shell>`
@@ -237,6 +261,8 @@ agys completion powershell >> $PROFILE
 | `AGYS_NO_ENCRYPT=1` | 关闭 | 本地 vault 明文（不推荐，仅迁移 / 兼容用） |
 | `AGYS_BACKEND=memory` | `auto` | 测试后端，不碰真实凭据 |
 | `AGYS_PROCESS_NAMES` | 平台相关 | 自定义进程名（逗号分隔；设为空串可禁用检测） |
+| `AGYS_PROXY` | — | 一次性覆盖代理 URL（优先于配置文件） |
+| `AGYS_NO_PROXY=1` | — | 本次不注入代理（临时直连） |
 | `AGYS_GITHUB_OWNER` | `zhaoyewei` | `update` / `check` 使用的仓库 owner |
 | `AGYS_INSTALL_URL` | 官方 install.sh | 自定义升级脚本 URL |
 

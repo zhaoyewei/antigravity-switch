@@ -16,6 +16,10 @@ contains() {
   if echo "$2" | grep -qF "$3"; then PASS=$((PASS+1)); echo "  ok: $1";
   else FAIL=$((FAIL+1)); echo "  FAIL: $1 (未找到: $3)"; fi
 }
+not_contains() {
+  if echo "$2" | grep -qF "$3"; then FAIL=$((FAIL+1)); echo "  FAIL: $1 (不应包含: $3)";
+  else PASS=$((PASS+1)); echo "  ok: $1"; fi
+}
 
 export PYTHONPATH="$ROOT/src"
 export AGYS_HOME="$T/home"
@@ -24,6 +28,7 @@ export AGYS_MEMORY_FILE="$T/home/memory_credential.json"
 export AGYS_STUB_MEMORY_FILE="$AGYS_MEMORY_FILE"
 export AGYS_STUB_GEMINI_HOME="$T/gemini"
 export AGYS_STUB_ARGS_FILE="$T/args.json"
+export AGYS_STUB_ENV_FILE="$T/stub-env.json"
 export AGYS_BACKEND=memory
 export AGYS_PROCESS_NAMES=""
 export AGYS_AGY_BIN="$PY $STUB"
@@ -78,7 +83,7 @@ contains "rename 生效" "$($AGYS list)" "alice-main"
 contains "审计日志有记录" "$($AGYS log -n 50)" "switch"
 contains "layout 输出指纹" "$($AGYS layout)" "fingerprint"
 contains "doctor 输出加密方式" "$($AGYS doctor)" "加密"
-contains "version" "$($AGYS version)" "0.3.0"
+contains "version" "$($AGYS version)" "0.4.0"
 contains "--json doctor" "$($AGYS --json doctor)" '"ok": true'
 
 echo "== 5b. 扩展命令（status / whoami / ids / info / default / 别名 / help / 补全 / 自检修复 / 备份 / 登出） =="
@@ -100,6 +105,26 @@ $AGYS logout >/dev/null
 check "logout 清除活跃凭据" "$(mem)" "ABSENT"
 $AGYS use alice-main >/dev/null
 contains "use 恢复活跃凭据" "$(mem_blob)" "ALICE-RT-2"
+
+echo "== 5c. 代理配置（只注入子进程，不改系统代理） =="
+contains "proxy 初始未配置" "$($AGYS proxy)" "未配置代理"
+$AGYS proxy set 127.0.0.1:1 >/dev/null 2>&1
+contains "proxy set 生效" "$($AGYS proxy show)" "127.0.0.1:1"
+if [ -f "$AGYS_HOME/config.json" ]; then PASS=$((PASS+1)); echo "  ok: 配置文件已生成"; else FAIL=$((FAIL+1)); echo "  FAIL: 配置文件未生成"; fi
+contains "proxy 来源为 config" "$($AGYS --json proxy)" '"source": "config"'
+$AGYS proxy clear >/dev/null
+contains "proxy clear 生效" "$($AGYS proxy)" "未配置代理"
+
+# 黑盒验证：代理确实注入到 agy 子进程，clear 后不再注入
+$AGYS proxy set 127.0.0.1:7890 >/dev/null 2>&1
+rm -f "$T/stub-env.json"
+AGYS_STUB_BLOB="$BLOB_ALICE2" AGYS_STUB_EMAIL=alice@gmail.com $AGYS as alice-main >/dev/null 2>&1
+contains "agy 子进程拿到 HTTPS_PROXY" "$(cat "$T/stub-env.json" 2>/dev/null)" "127.0.0.1:7890"
+contains "agy 子进程 NO_PROXY 含 localhost" "$(cat "$T/stub-env.json" 2>/dev/null)" "localhost"
+$AGYS proxy clear >/dev/null
+rm -f "$T/stub-env.json"
+AGYS_STUB_BLOB="$BLOB_ALICE2" AGYS_STUB_EMAIL=alice@gmail.com $AGYS as alice-main >/dev/null 2>&1
+not_contains "clear 后不再注入配置的代理" "$(cat "$T/stub-env.json" 2>/dev/null)" "127.0.0.1:7890"
 
 echo "== 6. export / import（校验和） =="
 contains "导出含校验和" "$(cat "$EXPORT")" '"checksum"'

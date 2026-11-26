@@ -8,7 +8,7 @@ import tarfile
 import tempfile
 import time
 
-from . import agy_install, audit, doctor, identity, journal
+from . import agy_install, audit, doctor, identity, journal, proxy
 from .common import AgysError, SwitchLock, confirm, read_ga, write_ga
 from .config import paths
 from .crypto import secure_dir
@@ -19,7 +19,7 @@ from .vault import (
 
 COMMANDS = ("add list current use as switch run ls alias rename remove rm export "
             "import log layout doctor version update init status whoami logout "
-            "info default completion backup restore check help ids").split()
+            "info default completion backup restore check proxy help ids").split()
 
 TOPICS = {
     "commands": """常用命令
@@ -64,6 +64,8 @@ TOPICS = {
   AGYS_NO_ENCRYPT=1      本地 vault 明文（不推荐，仅迁移用）
   AGYS_BACKEND=memory    测试后端，不碰真实凭据
   AGYS_PROCESS_NAMES     自定义进程名列表
+  AGYS_PROXY             一次性指定代理（覆盖配置文件），如 http://127.0.0.1:7890
+  AGYS_NO_PROXY=1        本次不注入代理（临时直连）
   --json                结构化输出，便于脚本集成""",
     "security": """安全模型
   本地 vault 加密：Windows DPAPI / macOS·Linux SHAKE256+HMAC，密钥 0600
@@ -386,14 +388,13 @@ def cmd_restore(args, rep, store, v):
 # ---------------------------------------------------------------- 检查 / 帮助
 
 def cmd_check(args, rep, store, v):
-    import urllib.request
     from . import __version__
     owner = os.environ.get("AGYS_GITHUB_OWNER", "zhaoyewei")
     url = (f"https://raw.githubusercontent.com/{owner}/antigravity-switch/main/"
            "src/agys/__init__.py")
     latest = None
     try:
-        with urllib.request.urlopen(url, timeout=10) as r:
+        with proxy.urlopen(url, timeout=10) as r:
             text = r.read().decode("utf-8")
         latest = text.split('__version__ = "')[1].split('"')[0]
     except Exception as e:
@@ -403,6 +404,56 @@ def cmd_check(args, rep, store, v):
             issues=len(d["warnings"]), warnings=d["warnings"])
     rep.msg(f"agys {__version__}" + (f" → 仓库最新 {latest}" if latest else "（版本检查跳过）"))
     rep.msg(f"自检：{len(d['warnings'])} 条提示；详细报告用 agys doctor")
+
+
+def cmd_proxy(args, rep, store, v):
+    sub = getattr(args, "proxy_cmd", None) or "show"
+
+    if sub == "set":
+        url = proxy.set_proxy(args.url, args.no_proxy)
+        entries = proxy.no_proxy_entries()
+        rep.msg(f"agys: 已设置代理 {proxy.mask(url)}（写入 {paths().config_file}）")
+        rep.msg(f"agys: NO_PROXY = {','.join(entries)}")
+        ok, detail = proxy.test(url)
+        if ok:
+            rep.msg(f"agys: 连通性检测通过：{detail}")
+        else:
+            rep.warn(f"连通性检测失败：{detail}（配置已保存；代理可能尚未启动）")
+        rep.set(proxy=proxy.mask(url), reachable=ok,
+                no_proxy=",".join(entries), config=paths().config_file)
+        return
+
+    if sub == "clear":
+        proxy.clear_proxy()
+        rep.msg("agys: 已清除代理配置；agys 不再注入，agy 将继承父进程原有的网络设置")
+        rep.set(proxy=None)
+        return
+
+    if sub == "test":
+        ok, detail = proxy.test(args.url)
+        rep.set(ok=ok, detail=detail, proxy=proxy.mask(proxy.current() or ""))
+        if not ok:
+            raise AgysError(f"代理不可用：{detail}")
+        rep.msg(f"agys: {detail}")
+        return
+
+    url = proxy.current()
+    entries = proxy.no_proxy_entries()
+    source = "config" if url else "none"
+    if url and os.environ.get("AGYS_PROXY"):
+        source = "env:AGYS_PROXY"
+    rep.set(proxy=proxy.mask(url or ""), source=source,
+            no_proxy=",".join(entries), config=paths().config_file)
+    if not url:
+        if os.environ.get("AGYS_NO_PROXY") == "1":
+            rep.msg("agys: 本次已通过 AGYS_NO_PROXY=1 禁用代理注入")
+        rep.msg("agys: 未配置代理（agy 将直连或走系统网络设置）")
+        rep.msg("agys: 设置示例：agys proxy set http://127.0.0.1:7890")
+        return
+    rep.msg(f"agys: 代理 {proxy.mask(url)}（来源：{source}）")
+    rep.msg(f"       NO_PROXY = {','.join(entries)}")
+    rep.msg("       作用范围：agys add / as / update 启动的 agy、agy 安装脚本，"
+            "以及 agys 自身的版本检查")
 
 
 def cmd_help(args, rep, store, v):
