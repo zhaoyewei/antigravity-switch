@@ -71,6 +71,19 @@ make test                           # 两者一起跑
 3. 在 `layout.probe()` 里补上该平台的布局字段。
 4. 加单元测试，并确保 `AGYS_BACKEND=memory` 的测试不会误触真实实现。
 
+## 发布（维护者）
+
+1. 版本号同步改 `src/agys/__init__.py` 与 `pyproject.toml`，在 `CHANGELOG.md` 补条目。
+2. 本地跑 `make test`（单测 + 集成测试，含免 Python 安装链路），确认全绿。
+3. 打 `v*` tag 并推送，`release.yml` 会用 PyInstaller 在 Windows / macOS / Linux 各平台
+   构建单文件二进制 + `.sha256`，并连同 sdist/wheel 一起附到 GitHub Release。
+4. 产物名必须与 `src/agys/installer.py` 的 `asset_name()` 一致（`agys-<os>-<arch>[.exe]`），
+   否则 `install.sh` / `install.ps1` 下载不到；改命名规则时请同时更新该模块与单测。
+5. 发布后用 `install.sh` / `install.ps1` 实机验一次「无需 Python」的安装与 `agys update`。
+
+本地想试打包：`python -m pip install pyinstaller && python scripts/build_binary.py`，
+产物在 `dist/binaries/`（该目录已被 gitignore）。
+
 ## 提交与 Pull Request
 
 - commit message 用简短的祈使句，例如 `fix: unlock file lock on Unix`、`docs: add command reference`。

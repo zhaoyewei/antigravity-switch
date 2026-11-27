@@ -16,3 +16,6 @@ venv/
 # runtime secrets (never commit)
 .vault.key
 memory_credential.json
+
+# WorkBuddy local session notes (not project source)
+.workbuddy/

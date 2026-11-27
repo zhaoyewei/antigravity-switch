@@ -54,6 +54,7 @@ def load_vault():
         meta.setdefault("id", acc)
         meta.setdefault("email", "")
         meta.setdefault("aliases", [])
+        meta.setdefault("tags", [])
         meta.setdefault("identity", "")
     return v
 
@@ -78,6 +79,7 @@ def save_profile(acc_id, blob: bytes, ga, meta):
         "id": acc_id,
         "email": meta.get("email") or identity.email_of(ident),
         "aliases": meta.get("aliases") or [],
+        "tags": meta.get("tags") or [],
         "identity": ident,
         "created": meta.get("created") or now_iso(),
         "updated": now_iso(),

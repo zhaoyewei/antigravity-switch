@@ -1,6 +1,6 @@
 PY ?= python3
 
-.PHONY: help install dev test unit integration compile lint clean build dist verify
+.PHONY: help install dev test unit integration compile lint clean build dist verify binary
 
 help:
 	@echo "antigravity-switch (agys) — 常用目标"
@@ -11,6 +11,7 @@ help:
 	@echo "  make compile      编译检查 src/agys"
 	@echo "  make lint         编译检查 + 单元测试"
 	@echo "  make build        构建 sdist / wheel (需要 build)"
+	@echo "  make binary       构建免 Python 单文件二进制 (需要 pyinstaller)"
 	@echo "  make clean        清理本地构建与缓存产物"
 	@echo "  make verify       compile + test + CLI 冒烟"
 
@@ -35,6 +36,10 @@ lint: compile unit
 build:
 	$(PY) -m pip install --upgrade build
 	$(PY) -m build
+
+binary:
+	$(PY) -m pip install --upgrade pyinstaller
+	$(PY) scripts/build_binary.py
 
 dist: build
 

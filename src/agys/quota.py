@@ -22,6 +22,7 @@ streamGenerateContent   真正耗尽时返回 429 RESOURCE_EXHAUSTED
 """
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import time
@@ -133,6 +134,47 @@ def access_token(acc_id, cache=None, force=False):
     raise RuntimeError(f"帐号 '{acc_id}' 没有可用的 refresh_token")
 
 
+# ---------------------------------------------------------------- 重置时间
+
+def reset_epoch(raw):
+    """把 resetTime（ISO 字符串或 epoch 秒/毫秒）解析成 epoch 秒；失败返回 None。"""
+    if not raw:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    if s.isdigit():
+        ts = float(s)
+        return ts / 1000.0 if ts > 1e12 else ts
+    try:
+        dt = datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        return dt.timestamp()
+    except ValueError:
+        return None
+
+
+def fmt_reset(raw):
+    """resetTime 的本地显示（MM-DD HH:MM），解析失败时原样返回。"""
+    ep = reset_epoch(raw)
+    if ep is None:
+        return str(raw) if raw else ""
+    return datetime.datetime.fromtimestamp(ep).astimezone().strftime("%m-%d %H:%M")
+
+
+def _earliest_reset(buckets):
+    """各配额桶里最早的重置时间（原始字符串；没有就空串）。"""
+    pairs = []
+    for b in buckets:
+        raw = b.get("reset") or ""
+        if raw:
+            pairs.append((reset_epoch(raw), raw))
+    if not pairs:
+        return ""
+    return min(pairs, key=lambda p: p[0] if p[0] is not None else float("inf"))[1]
+
+
 # ---------------------------------------------------------------- 探测
 
 def _post(method, token, body=None, timeout=20):
@@ -207,7 +249,7 @@ def probe(acc_id, cache=None):
             remaining = min(fracs) if fracs else None
             state = "exhausted" if remaining is not None and remaining <= 0.001 else "ok"
             return {**base, "state": state, "remaining": remaining,
-                    "models": buckets,
+                    "models": buckets, "reset": _earliest_reset(buckets),
                     "detail": (f"剩余 {remaining * 100:.0f}%" if remaining is not None
                                else "已返回配额但无比例字段")}
         return {**base, "state": "unknown", "detail": "配额接口无数据"}
@@ -274,16 +316,17 @@ def snapshot(v, offline=False, ids=None):
         if not offline and now - (prev.get("checked") or 0) > QUOTA_TTL:
             report = probe(acc_id, cache)
             cached[acc_id] = {k: report.get(k) for k in
-                              ("state", "checked", "remaining", "detail",
+                              ("state", "checked", "remaining", "detail", "reset",
                                "token", "token_exp", "refreshed_at")}
             cached[acc_id]["models"] = report.get("models") or []
         elif prev:
             report = {**prev, "id": acc_id, "models": prev.get("models") or []}
             report.setdefault("remaining", None)
             report.setdefault("detail", "")
+            report.setdefault("reset", "")
         if report is None:
             report = {"id": acc_id, "state": "unknown", "remaining": None,
-                      "detail": "未探测", "checked": 0, "models": []}
+                      "detail": "未探测", "checked": 0, "models": [], "reset": ""}
         report["email"] = meta.get("email") or ""
         report["last_switch"] = last.get(acc_id, "")
         reports.append(report)
@@ -320,6 +363,9 @@ def label(report):
     text = STATE_LABEL.get(report.get("state"), report.get("state") or "?")
     if isinstance(report.get("remaining"), (int, float)):
         text += f" {report['remaining'] * 100:.0f}%"
+    if report.get("state") == "exhausted" and report.get("reset"):
+        # 订阅帐号的重置时间：知道什么时候能「回血」，如实展示
+        text += f"（{fmt_reset(report['reset'])} 重置）"
     return text
 
 

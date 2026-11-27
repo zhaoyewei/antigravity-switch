@@ -14,8 +14,9 @@ from .commands import (
     cmd_add, cmd_alias, cmd_as, cmd_auto, cmd_backup, cmd_check, cmd_completion,
     cmd_current, cmd_default, cmd_doctor, cmd_export, cmd_help, cmd_history, cmd_ids,
     cmd_import, cmd_info, cmd_init, cmd_layout, cmd_list, cmd_log, cmd_logout,
-    cmd_proxy, cmd_remove, cmd_rename, cmd_restore, cmd_status, cmd_tui, cmd_update,
-    cmd_use, cmd_version, cmd_whoami,
+    cmd_prompt, cmd_proxy, cmd_remove, cmd_rename, cmd_restore, cmd_stats,
+    cmd_status, cmd_tag, cmd_tui, cmd_update, cmd_use, cmd_version, cmd_watch,
+    cmd_whoami,
 )
 from .common import AgysError, Reporter
 from .credentials import CredentialError, get_store
@@ -32,7 +33,7 @@ STRICT = frozenset({"add", "use", "as", "tui", "auto"})
 # 所以先把它们提到帐号名之前。
 REORDER_CMDS = ("as", "run", "auto")
 GUARD_FLAGS = {"--no-guard", "--close-all", "--yes", "--allow-layout-change"}
-AUTO_FLAGS = {"--status", "--dry-run", "--offline", "--no-launch"}
+AUTO_FLAGS = {"--status", "--dry-run", "--offline", "--no-launch", "--tag"}
 
 
 def _guard_flags(sp):
@@ -119,6 +120,8 @@ def build_parser():
                     help="只用额度缓存，不联网探测")
     sp.add_argument("--no-launch", dest="auto_launch", action="store_false",
                     help="只切换，不启动 agy")
+    sp.add_argument("--tag", dest="auto_tag",
+                    help="只在打了该标签的帐号里选（agys tag 设置标签）")
     sp.add_argument("args_cmd", nargs=argparse.REMAINDER,
                     help="透传给 agy 的参数（建议用 -- 分隔）")
     _guard_flags(sp)
@@ -177,6 +180,13 @@ def build_parser():
     sp.add_argument("name", nargs="?", help="要设为默认的帐号；省略则查看")
     sp.set_defaults(func=cmd_default)
 
+    sp = sub.add_parser("tag", help="给帐号打标签（auto --tag 在子集内选号）；"
+                                    "不带参数时列出全部标签")
+    sp.add_argument("name", nargs="?", help="帐号")
+    sp.add_argument("tags", nargs="*", help="标签（可多个）")
+    sp.add_argument("--remove", action="store_true", help="移除这些标签")
+    sp.set_defaults(func=cmd_tag)
+
     sub.add_parser("ids", help="列出所有 id 与别名（供补全 / 脚本使用）").set_defaults(
         func=cmd_ids)
 
@@ -221,6 +231,18 @@ def build_parser():
     sp.add_argument("-n", "--limit", type=int, default=20)
     sp.set_defaults(func=cmd_log)
 
+    sp = sub.add_parser("stats", help="帐号使用统计：切换次数 / 最后切换时间（只读）")
+    sp.set_defaults(func=cmd_stats)
+
+    sp = sub.add_parser("watch", help="持续监控帐号额度并在异常时提醒（Ctrl+C 停止）")
+    sp.add_argument("--interval", type=int, default=300,
+                    help="探测间隔秒数（最小 30，默认 300）")
+    sp.add_argument("--low", type=float, default=0.1,
+                    help="当前帐号剩余额度低于该比例时提醒（默认 0.1）")
+    sp.add_argument("--once", action="store_true",
+                    help="只探测一轮就退出（适合 cron / 计划任务）")
+    sp.set_defaults(func=cmd_watch)
+
     sub.add_parser("version", help="显示版本").set_defaults(func=cmd_version)
 
     sp = sub.add_parser("update", help="重新运行安装脚本升级 agys")
@@ -236,6 +258,12 @@ def build_parser():
         func=cmd_status)
     sub.add_parser("whoami", help="输出当前活跃邮箱（脚本友好）").set_defaults(
         func=cmd_whoami)
+
+    sp = sub.add_parser("prompt", help="输出当前帐号（shell 提示符集成用）")
+    sp.add_argument("fmt", nargs="?", default="{id}",
+                    help="格式串，可用 {id} 与 {email}，如 'agy:{id}'")
+    sp.set_defaults(func=cmd_prompt)
+
     sub.add_parser("logout", help="登出并清除活跃凭据，但保留所有帐号").set_defaults(
         func=cmd_logout)
 
@@ -292,7 +320,27 @@ def _is_readonly(args):
     return False
 
 
+def _ensure_utf8():
+    """Windows 上统一 stdout/stderr 为 UTF-8。
+
+    PyInstaller 打出的单文件程序在中文 Windows 上默认按 cp936 写管道输出，
+    而源码运行（UTF-8 模式）写的是 UTF-8 —— 同一个二进制被 `agys ... | jq`
+    或 Git Bash 接住时中文会乱码。Windows 控制台本身用 UTF-8 宽字符写入，
+    所以把 TextIOWrapper 统一成 UTF-8 对交互显示也无害。
+    """
+    if sys.platform != "win32":
+        return
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            enc = (getattr(stream, "encoding", "") or "").lower().replace("-", "")
+            if enc not in ("utf8", "utf_8") and hasattr(stream, "reconfigure"):
+                stream.reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError, AttributeError):
+            pass
+
+
 def main(argv=None):
+    _ensure_utf8()
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
     argv = _default_to_auto(argv, parser)

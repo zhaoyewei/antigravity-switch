@@ -1,5 +1,68 @@
 # Changelog
 
+## 0.7.0
+
+**429 兜底覆盖会话中途（最被需要的改进）**
+- agy 非零退出时——无论启动瞬间还是会话中途撞 429——都探测确认真实状态：
+  是额度问题就提醒并自动换下一个帐号重试；不是就原样返回真实错误
+- 依旧**绝不主动打断正在跑的会话**，只处理已退出的；换号重试是新会话，
+  原会话历史仍可在 `agys history` 查看
+- `AGYS_AUTO_FASTFAIL` 窗口只影响提示措辞（「启动即失败」 vs 「会话中途退出」），
+  换号与否一律由探测确认
+- 最后一个帐号也用尽时，提醒额度重置 / 重新登录，不再含糊地说「换下一个」
+- `agys as` 退出非零后顺手探测：确认额度用尽会提醒一句「运行 agys 可自动换号」
+
+**额度曲线（订阅帐号）**
+- `retrieveUserQuota` 返回的 `resetTime` 现在被解析并缓存；额度用尽的订阅帐号
+  在 `auto --status` 表里标注「MM-DD HH:MM 重置」（本地时间），`--json` 输出带 `reset` 字段
+- `quota.reset_epoch / fmt_reset`：ISO 字符串与 epoch 秒/毫秒都能解析
+
+**新命令：监控 / 统计 / 标签 / 提示符**
+- `agys watch [--interval N] [--low 比例] [--once]`：持续监控所有帐号额度；
+  状态有变化才说话，当前帐号耗尽 / 需重登 / 剩余低于阈值时提醒 + 终端响铃。
+  `--once` 单轮适合 cron；持续模式不支持 `--json`（单轮支持）
+- `agys stats`：各帐号切换次数 / 失败次数 / 最后切换时间 / 添加时间（审计日志，纯只读；
+  已删除帐号也带出并标注）
+- `agys tag [帐号] [标签...] [--remove]`：打标签；不带参数列出全部标签。
+  `agys auto --tag work` 只在子集内选号（只探测打标帐号）；`list` / `info` 显示标签
+- `agys prompt [格式串]`：输出当前帐号（`{id}` / `{email}`），供 starship / oh-my-posh /
+  PS1 集成；只读 vault 不碰凭据库，没有帐号时输出 `none`
+
+**token 过期预警**
+- `info` 显示 token 剩余有效期（如「（3 小时）」）并在已过期 / 48 小时内过期时警告；
+  `--json` 增加 `token_remaining_sec`
+- `doctor` 对每个 profile 解析 token 过期时间：已过期 / 48 小时内过期的帐号进入警告列表，
+  诊断输出附带每个帐号的 token 过期时间
+
+**内部改进**
+- `_token_expiry` 从 commands/accounts.py 上移到 identity.py（`token_expiry / expiry_dt /
+  expiry_age / expiry_human`），info 与 doctor 共用
+- vault：profile 与帐号元数据新增 `tags` 字段（保存 / 读取 / 修复索引时均保持）
+- 新命令分组：`stats` / `watch` 进 diag，`prompt` 进 misc，`tag` 进 accounts
+
+**免 Python 安装（单文件二进制）**
+- 新增 `scripts/build_binary.py`：PyInstaller 打包单文件可执行程序（内置 Python 运行时），
+  产物名由新增的 `installer.asset_name()` 统一决定（`agys-<os>-<arch>[.exe]`，不含版本号），
+  同时产出 `.sha256`；构建后自动冒烟 `version`
+- `release.yml` 改为多平台矩阵（Windows x86_64 / macOS arm64·x86_64 / Linux x86_64·arm64），
+  逐平台构建 + 校验产物名 + 冒烟，并连同 sdist/wheel 一起附到 GitHub Release
+- `install.sh` 默认优先下载 Release 二进制（**不需要 Python**），自动校验 `.sha256`；
+  产物不可用 / 校验失败时回退源码安装（需 Python 3.9+）；`AGYS_REQUIRE_BINARY=1` 可禁止回退
+- 新增 `install.ps1`（Windows PowerShell 一键安装，无需 Python / Git Bash，支持 TLS 1.2 与代理）与
+  `uninstall.ps1`；两者都只删带安装标记的目录，帐号数据 `~/.agy-accounts` 不动
+- `agys update` 会读 `~/.agys/install-mode`：二进制安装的 Windows 用户改跑 `install.ps1`，
+  其余沿用 `install.sh`（它本身会优先下载新二进制）
+- 新增 `installer.py`（产物命名 / Release URL / 安装模式标记 / 升级脚本选择），纯逻辑可单测；
+  `install.sh` 的 SHA-256 计算改为 stdin 读取，规避 Git Bash Windows 临时路径转义前缀问题
+
+**测试**
+- 单测新增 24 个用例：429 中途兜底（模拟长会话时钟）、resetTime 解析与展示、
+  stats / prompt / tag / watch / 过期预警；另新增 `test_installer.py` 18 个用例
+  （产物命名 / URL / 模式标记 / update 分派）；单测 159 passed + 1 skipped，集成 76 项全通过
+- 集成测试新增「9b. 免 Python 二进制安装」：用 `file://` 假二进制离线验证下载、SHA-256 校验、
+  `install-mode` 标记与版本自检，以及校验失败 / 强制二进制失败的拒绝路径
+- CI 增加 `bash -n` 安装脚本语法检查与 Windows PowerShell 解析器语法检查
+
 ## 0.6.0
 
 **auto 自动选号：裸 `agys` 就是它**

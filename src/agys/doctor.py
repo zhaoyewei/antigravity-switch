@@ -38,8 +38,10 @@ def collect(store):
     for acc in sorted(v["accounts"]):
         try:
             prof = load_profile(acc)
+            expiry = identity.token_expiry(prof["blob"])
             profiles.append({"id": acc, "ok": bool(prof["blob"]),
-                             "bytes": len(prof["blob"]), "identity": prof.get("identity")})
+                             "bytes": len(prof["blob"]), "identity": prof.get("identity"),
+                             "token_expiry": expiry})
         except (KeyError, CryptoError) as e:
             profiles.append({"id": acc, "ok": False, "error": str(e)})
     from .process import describe, list_procs
@@ -66,6 +68,19 @@ def collect(store):
                      else layout["ga_exists"]):
         warnings.append("有活跃凭据但状态文件不存在，agy 可能已换存储位置"
                         "（运行 agys layout --discover 查看候选）")
+    # token 过期预警：已过期或 48 小时内过期的帐号值得提前知道
+    for pr in profiles:
+        if not pr.get("token_expiry"):
+            continue
+        age = identity.expiry_age(pr["token_expiry"])
+        if age is None:
+            continue
+        if age <= 0:
+            warnings.append(f"帐号 '{pr['id']}' 的 token 已过期（{identity.expiry_human(pr['token_expiry'])}），"
+                            "刷新失败时需要重新登录")
+        elif age < 48 * 3600:
+            warnings.append(f"帐号 '{pr['id']}' 的 token 将在 "
+                            f"{identity.expiry_human(pr['token_expiry'])}内过期")
     return {
         "version": __version__,
         "platform": sys.platform,
@@ -120,6 +135,7 @@ def render(d):
     for pr in d["profiles"]:
         lines.append(f"    [{'ok' if pr['ok'] else '坏'}] {pr['id']} "
                      f"({pr.get('identity') or '-'}) {pr.get('bytes', 0)} 字节"
+                     + (f"  token {pr['token_expiry']}" if pr.get("token_expiry") else "")
                      + (f"  {pr['error']}" if pr.get("error") else ""))
     rp = d["running_processes"]
     lines.append("  运行中 agy 进程: " +

@@ -8,9 +8,10 @@
 **一条命令在多个 Google 帐号之间切换 Antigravity CLI（`agy`），不用反复登出登录。**
 
 直接敲 `agys`（不带任何参数）就是「自动挑一个额度最多的帐号并启动 agy」；
-`agy` 一启动就因额度用光退出时，会提醒你一声并自动换下一个帐号。
+agy 因额度用尽退出时（无论启动瞬间还是会话中途撞 429），会提醒你一声并自动换下一个帐号。
 
-纯 Python 标准库实现、零运行时依赖，支持 Windows / macOS / Linux。
+纯 Python 标准库实现、零运行时依赖，支持 Windows / macOS / Linux；
+也可直接安装**免 Python 的单文件二进制**（内置运行时，见[安装](#安装无需-python)）。
 `agys` 把每个帐号的登录凭据快照到本地加密 vault，切换时原子替换并读回验证——
 不是改配置骗过 UI，而是真正换掉 agy 读取的那份凭据。
 
@@ -23,15 +24,20 @@
 | | |
 |---|---|
 | 🔐 **原子切换 + 读回验证** | 写回后重新读取凭据并校验身份，杜绝「假成功」；任一步失败自动回滚 |
-| 🤖 **auto 自动选号** | 裸 `agys` = `agys auto`：按额度与可用性挑帐号；agy 因额度用光秒退时提醒并自动换号重试 |
+| 🤖 **auto 自动选号** | 裸 `agys` = `agys auto`：按额度与可用性挑帐号；agy 因额度退出（含会话中途撞 429，只处理已退出的会话、绝不中途打断）时提醒并自动换号重试 |
 | 🧬 **稳定身份判定** | 从 token 的 email / sub / refresh token 指纹识别帐号，邮箱变更或 token 轮换都不会认错 |
 | 🛡️ **本地加密** | Windows DPAPI；macOS / Linux SHAKE256 流密码 + HMAC-SHA256，密钥文件 `0600` |
 | 🚦 **进程守卫** | 检测运行中的 agy 进程，避免后台刷新把旧帐号写回；`--close-all` 可自动关闭并尽力重开 |
 | 📐 **布局自动适配** | 结构指纹只含「往哪写」的字段；agy 升级改版本号不再打断切换，位置真变了会自动发现并兼容（只改指针，不搬数据） |
-| 🩺 **自检与自愈** | `doctor` / `doctor --fix` / `layout --discover` / `check`，出问题能定位也能修复 |
+| 🩺 **自检与自愈** | `doctor` / `doctor --fix` / `layout --discover` / `check`，出问题能定位也能修复；token 临期 / 已过期提前预警 |
+| 📶 **额度监控** | `agys watch` 持续探测，当前帐号耗尽 / 临期 / 需重登时提醒（含终端响铃）；`--once` 单轮适合定时任务 |
+| 📊 **使用统计** | `agys stats` 各帐号切换次数、失败次数与最后活跃时间（审计日志，纯只读） |
+| 🏷️ **标签分组** | `agys tag` 给帐号打标签，`agys auto --tag work` 只在子集内选号 |
 | 📦 **迁移友好** | `export` / `import`（SHA-256 校验和 + `skip/overwrite/rename/ask` 冲突策略）、`backup` / `restore` |
 | 🗂️ **会话历史** | `agys history` 列出/搜索/导出 agy 会话历史；agy 本地历史本就不按帐号分区，所有帐号天然共用 |
 | ⌨️ **交互式 TUI** | `agys tui`（或 `agys use` 省略帐号）方向键选择、回车切换，纯标准库实现 |
+| 💻 **提示符集成** | `agys prompt` 输出当前帐号，供 starship / oh-my-posh / PS1 显示 |
+| 📥 **免 Python 安装** | 一键安装预编译单文件二进制（内置运行时 + SHA-256 校验）；无产物时自动回退源码 |
 | 🧰 **脚本友好** | 全局 `--json`、`whoami`、`ids`、`status`、bash/zsh/fish/PowerShell 补全 |
 | 🧭 **自动安装 agy** | 需要 agy 的命令会自动检测；未安装时用官方脚本安装 |
 
@@ -39,27 +45,40 @@
 
 ## 快速开始
 
-### 安装
+### 安装（**无需 Python**）
 
-**一键安装**（macOS / Linux，以及 Windows 上的 Git Bash）：
+安装脚本默认下载 GitHub Release 里的**单文件可执行程序**（由 PyInstaller 从同一份源码打包，
+内置 Python 运行时），装到 `~/.agys/bin` 并自动处理 PATH。你的机器上**不需要安装 Python**。
 
 ```bash
+# macOS / Linux
 curl -fsSL https://raw.githubusercontent.com/zhaoyewei/antigravity-switch/main/install.sh | bash
+
+# Windows PowerShell（推荐，无需 Git Bash）
+irm https://raw.githubusercontent.com/zhaoyewei/antigravity-switch/main/install.ps1 | iex
 ```
 
-脚本安装到 `~/.agys/` 并自动处理 PATH。也可以离线安装或直接用 pip：
+安装时会自动下载同产物的 `.sha256` 并校验；产物覆盖 Windows x86_64 / macOS(arm64, x86_64) /
+Linux(x86_64, arm64)。若某个平台暂无产物或下载失败，脚本会**回退到源码安装**（此时需要
+Python 3.9+，仅标准库）；也可用 `AGYS_USE_SOURCE=1` 主动选择源码安装。
+
+其他安装方式（都要求机器已有 Python）：
 
 ```bash
 git clone https://github.com/zhaoyewei/antigravity-switch.git
-cd antigravity-switch && bash install.sh
-
-# 或者
-python -m pip install -e .
+cd antigravity-switch && bash install.sh     # 仓库内运行 = 离线源码安装
+python -m pip install -e .                   # 开发用
+pipx install antigravity-switch              # PyPI 发布后
 ```
 
-要求 **Python 3.9+**（仅标准库）。`agy` 不必预先安装——`agys init` / `add` / `use` / `as`
-会自动检测，缺失时使用 [Antigravity 官方安装脚本](https://antigravity.google/docs/getting-started?tab=cli) 安装。
+`agy` 不必预先安装——`agys init` / `add` / `use` / `as` 会自动检测，缺失时使用
+[Antigravity 官方安装脚本](https://antigravity.google/docs/getting-started?tab=cli) 安装。
 可用 `AGYS_NO_AUTO_INSTALL=1` 关闭自动安装。
+
+常用安装环境变量：`AGYS_INSTALL_DIR`（安装目录）、`AGYS_SKIP_PATH=1`（不改 PATH）、
+`AGYS_BIN_URL` / `AGYS_BIN_SHA256` / `AGYS_ASSET`（自定义镜像）、
+`AGYS_BIN_REF`（固定到某个 tag）、`AGYS_REQUIRE_BINARY=1`（禁止回退源码）。
+完整清单见 [docs/COMMANDS.md](docs/COMMANDS.md#环境变量)。
 
 ### 三步上手
 
@@ -83,18 +102,21 @@ agys as work -p "review this diff"   # 切换并以该帐号启动 agy，参数�
 |---|---|---|
 | 引导 | `init` | 检测/安装 agy，收录当前登录 |
 | 日常 | *（无参数）* `agys` | **auto**：自动挑帐号并启动 agy |
-| | `auto` | 同上（显式写法）：`--status` 看额度、`--dry-run` 只报告、`--no-launch` 只切换 |
+| | `auto` | 同上（显式写法）：`--status` 看额度、`--dry-run` 只报告、`--no-launch` 只切换、`--tag` 子集选号 |
 | | `add [名字]` | 添加帐号并立即生效 |
-| | `list` (`ls`) | 列出所有帐号（`*` = 当前） |
+| | `list` (`ls`) | 列出所有帐号（`*` = 当前，含标签） |
 | | `use` (`switch`) `<帐号>` | 切换帐号 |
 | | `as` (`run`) `<帐号> [参数…]` | 切换并以该帐号启动 agy |
 | | `current` / `status` | 查看当前状态 / 一行概览 |
 | | `whoami` / `ids` | 输出活跃邮箱 / 所有 id 与别名（脚本用） |
+| | `prompt [格式串]` | 输出当前帐号（shell 提示符集成） |
 | | `tui` | 交互式选择帐号并切换（`use` 省略帐号也会进入） |
 | | `history` | 查看 / 搜索 / 导出 agy 会话历史（所有帐号共享） |
+| | `watch` | 持续监控额度并在异常时提醒（`--once` 单轮） |
 | | `logout` | 登出并清除活跃凭据，但保留所有帐号 |
 | 管理 | `alias` / `rename` | 设置别名 / 重命名 id |
-| | `info [帐号]` | 查看凭据详情与 token 过期时间 |
+| | `tag [帐号] [标签…]` | 打标签 / 列出标签（配合 `auto --tag`） |
+| | `info [帐号]` | 查看凭据详情与 token 过期时间（临期预警） |
 | | `default [帐号]` | 查看 / 设置默认帐号 |
 | | `remove` (`rm`) `<帐号>` | 删除帐号（删当前帐号会同时登出） |
 | 迁移 | `export [路径]` | 导出所有帐号（**明文**，迁移用途） |
@@ -102,7 +124,7 @@ agys as work -p "review this diff"   # 切换并以该帐号启动 agy，参数�
 | | `backup [路径]` / `restore <文件>` | 完整备份 / 恢复 vault |
 | 诊断 | `doctor` / `doctor --fix` | 环境自检 / 自动修复 |
 | | `layout [--discover\|--adopt]` | 查看布局 / 列出候选布局 / 采纳可用布局 |
-| | `log` / `check` | 审计日志 / 版本与自检 |
+| | `log` / `stats` / `check` | 审计日志 / 使用统计 / 版本与自检 |
 | 维护 | `version` / `update` | 显示版本 / 重新运行安装脚本升级 |
 | | `completion <shell>` / `help [主题]` | 生成补全脚本 / 内置帮助 |
 | 网络 | `proxy set/show/clear/test` | 只给 agys 启动的进程配置代理 |
@@ -120,6 +142,7 @@ agys --status              # 看所有帐号的额度与可用性，不切换
 agys --dry-run             # 只告诉我"会选谁"
 agys --no-launch           # 只切换，不启动 agy
 agys --offline --status    # 5 分钟内的缓存结果，不联网
+agys --tag work            # 只在打了 work 标签的帐号里选
 agys -- --model gemini-2.5-pro   # `--` 之后的参数原样透传给 agy
 ```
 
@@ -128,12 +151,14 @@ agys -- --model gemini-2.5-pro   # `--` 之后的参数原样透传给 agy
 
 ### 额度用光了怎么办
 
-如果 agy 在 **20 秒内**非零退出（大概率是额度或网络），`agys` 会自动探测该帐号的真实状态：
+agy **非零退出**时（无论发生在启动瞬间还是会话中途——`agys` 绝不主动打断正在跑的会话，
+只处理已经退出的），都会自动探测该帐号的真实状态：
 
 - 确认是 `429 RESOURCE_EXHAUSTED` / 额度耗尽 → 打印一条提醒，**自动切到下一个帐号重试**；
-- 不是额度问题（比如配置错误、用户取消 `130`）→ 原样返回，不换号，让你看到真实错误。
+  已用尽且带重置时间的订阅帐号会在状态表里标注「MM-DD HH:MM 重置」；
+- 不是额度问题（比如配置错误、用户取消 `130` / `2`）→ 原样返回，不换号，让你看到真实错误。
 
-窗口可用 `AGYS_AUTO_FASTFAIL=30` 调整；确认用尽的结果会写进缓存，下次选号直接跳过。
+想让额度耗尽「提前被发现」而不是撞上才知道？看 [`agys watch`](#额度监控-watch)。
 
 ### 关于「额度百分比」
 
@@ -146,6 +171,44 @@ agys -- --model gemini-2.5-pro   # `--` 之后的参数原样透传给 agy
 
 探测只读：只拿 refresh_token 换 access_token，不写凭据库、不改 agy 任何文件。
 结果缓存 5 分钟在 `~/.agy-accounts/quota.json`，探测请求会走 `agys proxy` 的配置。
+
+---
+
+## 额度监控（`agys watch`）
+
+把「撞上 429 才知道」变成「提前知道」：`agys watch` 持续探测所有帐号，
+状态有变化才说话，当前帐号额度耗尽 / 需要重新登录 / 剩余低于阈值时提醒并响终端铃。
+
+```bash
+agys watch                          # 前台监控，Ctrl+C 停止
+agys watch --interval 60            # 每分钟探测一次（最小 30）
+agys watch --low 0.2                # 当前帐号剩余 <20% 就提醒（默认 10%）
+agys watch --once                   # 只探测一轮（适合 cron / 计划任务）
+```
+
+只读探测 + 缓存，不碰凭据；「额度未知」的免费帐号只做健康探针判断可用性。
+
+顺手的配套：`agys stats` 看各帐号切换次数与最后活跃时间；
+`agys tag <帐号> work` + `agys auto --tag work` 只在子集内选号。
+
+## 提示符集成（`agys prompt`）
+
+```bash
+agys prompt                 # bob
+agys prompt 'agy:{id}'      # agy:bob
+```
+
+starship 示例（`~/.config/starship.toml`）：
+
+```toml
+[custom.agys]
+command = "agys prompt 'agy:{id}'"
+when = "agys prompt"
+shell = ["sh", "--norc", "-c"]
+```
+
+PowerShell（`$PROFILE`）：`function Prompt { "[$(agys prompt)] $PWD> " }`。
+只读 vault、不碰凭据库，便宜且永不报错；没有帐号时输出 `none`。
 
 ---
 
@@ -280,7 +343,7 @@ Antigravity 的 CLI、IDE、App、SDK 共享同一份本地登录态。`agys` �
 | IDE 可能仍显示旧邮箱 | CLI 与 IDE 共享凭据，但 IDE 窗口需执行 `Developer: Reload Window` 才会刷新显示 |
 | 会话正文无法逐字还原 | agy 把正文存成 protobuf，`agys history` 只能给出元信息与可读摘要 |
 | 免费帐号看不到额度百分比 | Google 对无订阅帐号不返回配额包（`403 SUBSCRIPTION_REQUIRED`），`auto` 只能判「可用 / 已用尽」，见[上文](#关于额度百分比) |
-| 换号发生在「启动即失败」之后 | `auto` 靠 agy 的退出码与耗时判断，不会在会话中途打断；长会话里真正撞到 429 需要手动 `agys auto` 再起一次 |
+| 会话中途换号 = 新会话 | 429 兜底发生在 agy 会话已退出之后，绝不中途打断；换号重试是**新的** agy 会话（原会话历史仍在 `agys history` 里） |
 | macOS 后端未实机验证 | 欢迎反馈与 PR，见 [CONTRIBUTING.md](CONTRIBUTING.md) |
 
 ---
@@ -296,12 +359,18 @@ Antigravity 的 CLI、IDE、App、SDK 共享同一份本地登录态。`agys` �
 ```bash
 python -m pip install -e '.[test]'
 pytest -q                          # 单元测试（memory 后端，不触碰真实凭据）
-bash tests/integration/run_tests.sh # 跨平台集成测试
+bash tests/integration/run_tests.sh # 跨平台集成测试（含免 Python 安装链路）
 make test                          # 两者一起跑
+
+# 本地打一个免 Python 的单文件二进制（产物在 dist/binaries/）
+python -m pip install pyinstaller
+python scripts/build_binary.py
 ```
 
 CI 覆盖 Windows / macOS / Linux × Python 3.9 / 3.11 / 3.13。
 所有测试使用 `AGYS_BACKEND=memory`，**绝不读写真实 OS 凭据库**。
+打 `v*` tag 时 `release.yml` 会用 PyInstaller 为各平台构建二进制并附到 GitHub Release，
+安装脚本按 `src/agys/installer.py` 的 `asset_name()` 命名去下载。
 
 ## License
 

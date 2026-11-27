@@ -9,7 +9,8 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  # ---------------------------------------------------------------- 源码分发（PyPI 用）
+  dist:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,11 +34,80 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dist
-          path: dist/
+          path: dist/*
+
+  # ---------------------------------------------------------------- 免 Python 单文件二进制
+  # 产物名由 src/agys/installer.py 的 asset_name() 决定，安装脚本按同名下载。
+  binaries:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: linux-x86_64
+          - os: ubuntu-24.04-arm
+            label: linux-arm64
+          - os: macos-latest
+            label: macos-arm64
+          - os: macos-15-intel
+            label: macos-x86_64
+          - os: windows-latest
+            label: windows-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PyInstaller
+        run: python -m pip install --upgrade pyinstaller
+
+      - name: Build single-file binary
+        shell: bash
+        run: python scripts/build_binary.py
+
+      - name: Verify asset name matches installer.py
+        shell: bash
+        run: |
+          EXPECTED="$(python -c 'import sys; sys.path.insert(0,"src"); from agys import installer; print(installer.asset_name())')"
+          echo "expected asset: $EXPECTED"
+          test -f "dist/binaries/$EXPECTED"
+          test -f "dist/binaries/$EXPECTED.sha256"
+
+      - name: Smoke binary (memory backend, no real credentials)
+        shell: bash
+        run: |
+          BIN="$(find dist/binaries -maxdepth 1 -type f ! -name '*.sha256' -print -quit)"
+          chmod +x "$BIN" || true
+          "$BIN" version
+          AGYS_HOME="$RUNNER_TEMP/agys-smoke-home" \
+          AGYS_GEMINI_HOME="$RUNNER_TEMP/agys-smoke-gemini" \
+          AGYS_BACKEND=memory "$BIN" --json doctor > /dev/null
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.label }}
+          path: dist/binaries/*
+
+  # ---------------------------------------------------------------- 汇总发布
+  release:
+    needs: [dist, binaries]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: List release assets
+        run: ls -lh assets
 
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          files: assets/*
           generate_release_notes: true

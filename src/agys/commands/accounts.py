@@ -1,8 +1,6 @@
-"""帐号增删改查：add / list / current / remove / alias / rename / info / default / ids。"""
+"""帐号增删改查：add / list / current / remove / alias / tag / rename / info / default / ids。"""
 from __future__ import annotations
 
-import datetime
-import json
 import os
 import subprocess
 
@@ -87,6 +85,7 @@ def cmd_list(args, rep, store, v):
     for acc, m in sorted(v["accounts"].items()):
         rows.append({"id": acc, "email": m.get("email") or "",
                      "aliases": m.get("aliases") or [],
+                     "tags": m.get("tags") or [],
                      "identity": m.get("identity") or "",
                      "current": acc == cur})
     rep.set(accounts=rows, current=cur)
@@ -94,11 +93,13 @@ def cmd_list(args, rep, store, v):
         rep.msg("还没有任何帐号。用 agys add 添加第一个（会自动保存当前登录）。")
         return
     w = max([len(r["email"]) for r in rows] + [5])
-    rep.msg(f"{'*':<2} {'ID':<24} {'EMAIL':<{w}} ALIASES")
+    rep.msg(f"{'*':<2} {'ID':<24} {'EMAIL':<{w}} TAGS ALIASES")
     for r in rows:
         rep.msg(f"{'*' if r['current'] else ' ':<2} {r['id']:<24} "
-                f"{(r['email'] or '-'):<{w}} {','.join(r['aliases'])}")
-    rep.msg(f"\n共 {len(rows)} 个帐号；* = 当前帐号。")
+                f"{(r['email'] or '-'):<{w}} "
+                f"{','.join(r['tags']) or '-':<10} {','.join(r['aliases'])}")
+    rep.msg(f"\n共 {len(rows)} 个帐号；* = 当前帐号。标签用 agys tag 设置，"
+            "auto --tag <标签> 可在子集内选号。")
 
 
 def cmd_current(args, rep, store, v):
@@ -129,42 +130,8 @@ def cmd_ids(args, rep, store, v):
 
 
 def _token_expiry(blob):
-    """尽力从 token 里解析过期时间，返回 ISO 字符串或 None。"""
-    try:
-        data = json.loads(blob.decode("utf-8"))
-    except Exception:
-        return None
-
-    def walk(o, depth=0):
-        if depth > 6:
-            return None
-        if isinstance(o, dict):
-            for k, val in o.items():
-                if str(k).lower() in ("expiry", "expires_at", "expiry_date", "exp"):
-                    if val:
-                        return val
-                got = walk(val, depth + 1)
-                if got:
-                    return got
-        elif isinstance(o, list):
-            for val in o:
-                got = walk(val, depth + 1)
-                if got:
-                    return got
-        return None
-
-    raw = walk(data)
-    if raw is None:
-        return None
-    try:
-        if isinstance(raw, (int, float)) or str(raw).isdigit():
-            ts = float(raw)
-            if ts > 1e12:
-                ts /= 1000.0
-            return datetime.datetime.fromtimestamp(ts, datetime.timezone.utc).isoformat()
-        return str(raw)
-    except Exception:
-        return str(raw)
+    """尽力从 token 里解析过期时间（实现在 identity.py，这里保留旧入口）。"""
+    return identity.token_expiry(blob)
 
 
 def cmd_info(args, rep, store, v):
@@ -174,19 +141,30 @@ def cmd_info(args, rep, store, v):
     acc = resolve(name, v)
     prof = load_profile(acc)
     expiry = _token_expiry(prof["blob"])
+    human = identity.expiry_human(expiry)
+    age = identity.expiry_age(expiry)
     rep.set(id=acc, email=prof.get("email") or "", aliases=prof.get("aliases") or [],
             identity=prof.get("identity") or "", created=prof.get("created") or "",
             updated=prof.get("updated") or "", credential_bytes=len(prof["blob"]),
-            token_expiry=expiry, is_default=v.get("default") == acc)
+            tags=prof.get("tags") or [], token_expiry=expiry,
+            token_remaining_sec=(round(age) if age is not None else None),
+            is_default=v.get("default") == acc)
     rep.msg(f"帐号      {acc}")
     rep.msg(f"邮箱      {prof.get('email') or '-'}")
     rep.msg(f"身份      {prof.get('identity') or '-'}")
     rep.msg(f"别名      {', '.join(prof.get('aliases') or []) or '（无）'}")
+    rep.msg(f"标签      {', '.join(prof.get('tags') or []) or '（无）'}")
     rep.msg(f"创建      {prof.get('created') or '-'}")
     rep.msg(f"更新      {prof.get('updated') or '-'}")
     rep.msg(f"凭据大小  {len(prof['blob'])} 字节")
-    rep.msg(f"过期时间  {expiry or '未标注（由 agy 自动刷新）'}")
+    rep.msg(f"过期时间  {expiry or '未标注（由 agy 自动刷新）'}"
+            + (f"（{human}）" if human else ""))
     rep.msg(f"默认帐号  {'是' if v.get('default') == acc else '否'}")
+    if age is not None and age <= 0:
+        rep.warn(f"帐号 '{acc}' 的 token 已过期（{human}），切换该帐号时会重新刷新；"
+                 "仍失败请 agys remove 后重新 agys add 登录")
+    elif age is not None and age < 48 * 3600:
+        rep.warn(f"帐号 '{acc}' 的 token 将在 {human} 内过期，建议尽快确认可正常使用")
 
 
 def cmd_default(args, rep, store, v):
@@ -226,6 +204,47 @@ def cmd_alias(args, rep, store, v):
                      {**prof, "aliases": aliases})
         rep.msg(f"{APP}: 帐号 '{acc_id}' 的别名：{', '.join(aliases) or '（无）'}")
         rep.set(id=acc_id, aliases=aliases)
+
+
+def cmd_tag(args, rep, store, v):
+    """给帐号打标签（auto --tag 在子集内选号）。不带参数时列出全部标签。"""
+    if not args.name:
+        tags = {}
+        for acc, meta in v["accounts"].items():
+            for t in (meta.get("tags") or []):
+                tags.setdefault(t, []).append(acc)
+        rep.set(tags={k: sorted(accs) for k, accs in tags.items()})
+        if not tags:
+            rep.msg("还没有任何标签。用法：agys tag <帐号> <标签...>")
+        else:
+            for t, accs in sorted(tags.items()):
+                rep.msg(f"  {t}: {', '.join(accs)}")
+        return
+    acc_id = resolve(args.name, v)
+    given = [slugify(t) for t in (args.tags or []) if slugify(t)]
+    with SwitchLock():
+        meta = v["accounts"][acc_id]
+        tags = list(meta.get("tags") or [])
+        if args.remove:
+            if not given:
+                raise AgysError("用法：agys tag <帐号> --remove <标签...>")
+            removed = [t for t in tags if t in given]
+            tags = [t for t in tags if t not in given]
+        else:
+            if not given:
+                raise AgysError("用法：agys tag <帐号> <标签...>（或 --remove <标签...>）")
+            removed = []
+            for t in given:
+                if t not in tags:
+                    tags.append(t)
+        meta["tags"] = tags
+        save_vault(v)
+        prof = load_profile(acc_id)
+        save_profile(acc_id, prof["blob"], prof.get("google_accounts"),
+                     {**prof, "tags": tags})
+    rep.msg(f"{APP}: 帐号 '{acc_id}' 的标签：{', '.join(tags) or '（无）'}"
+            + (f"（已移除 {', '.join(removed)}）" if removed else ""))
+    rep.set(id=acc_id, tags=tags, removed=removed)
 
 
 def cmd_rename(args, rep, store, v):

@@ -55,18 +55,21 @@ agys auto --status                    # 显式写法，等价
 | `--dry-run` | 同上，外加「会选中谁」；不写凭据、不启动进程 |
 | `--offline` | 不联网探测，只用 `~/.agy-accounts/quota.json` 的缓存 |
 | `--no-launch` | 只完成切换，不启动 agy |
+| `--tag <标签>` | 只在打了该标签的帐号里选号（`agys tag` 设置标签） |
 | `--close-all` / `--no-guard` / `--yes` / `--allow-layout-change` | 同其它切换类命令 |
 
 **选号规则**：`ok` > `额度未知` > `已用尽` > `需重新登录` > `探测失败`；同档按剩余额度降序，
 再按「最久没切换过」优先。已耗尽的帐号会被跳过并打印警告。
 若**全部帐号都探测失败**（多为网络 / 代理问题），不会直接拒绝，而是按顺序尝试并给出警告。
 
-**额度用光后自动换号**：agy 在 `AGYS_AUTO_FASTFAIL`（默认 20）秒内非零退出时，
-会探测该帐号真实状态；确认是 429 / 额度耗尽才写标记、提醒、换下一个帐号重试。
-退出码 `130` / `2`（用户取消）与超时退出都视为正常结束，不换号。
+**额度用光后自动换号（含会话中途）**：agy 非零退出时——无论发生在启动瞬间还是会话中途
+（只处理已退出的会话，绝不主动打断正在跑的）——都会探测该帐号真实状态；
+确认是 429 / 额度耗尽才写标记、提醒、换下一个帐号重试。已用尽的订阅帐号如返回了
+重置时间，状态表会标注「MM-DD HH:MM 重置」。退出码 `130` / `2`（用户取消）视为正常结束，不换号；
+探测确认不是额度问题就原样返回真实错误。
 
 ```bash
-AGYS_AUTO_FASTFAIL=30 agys      # 放宽判定窗口（agy 启动较慢的机器）
+AGYS_AUTO_FASTFAIL=30 agys      # 放宽「启动即失败」判定窗口（只影响提示措辞，换号与否一律由探测确认）
 agys < /dev/null                # 非交互环境：只切换，不启动 agy
 ```
 
@@ -139,6 +142,52 @@ agys as work -- --some-agy-flag value
 EMAIL="$(agys whoami)"
 ```
 
+### `prompt [格式串]`
+
+输出当前帐号，供 shell 提示符集成（starship / oh-my-posh / PS1 等）。
+只读 vault、不碰凭据库，调用便宜且永不报错；没有帐号时输出 `none`。
+格式串可用 `{id}` 与 `{email}`，缺省 `{id}`。
+
+```bash
+agys prompt                      # bob
+agys prompt 'agy:{id}'           # agy:bob
+agys prompt '{email}'             # bob@gmail.com
+```
+
+starship 示例（`~/.config/starship.toml`）：
+
+```toml
+[custom.agys]
+command = "agys prompt 'agy:{id}'"
+when = "agys prompt"
+shell = ["sh", "--norc", "-c"]
+```
+
+### `stats`
+
+各帐号使用统计（来自审计日志，纯只读）：切换次数、失败次数、最后切换时间、添加时间、
+标签、当前标记。已删除但日志中仍有记录的帐号也会带出来（标注「已删除」）。
+
+```bash
+agys stats
+agys --json stats
+```
+
+### `watch [--interval 秒] [--low 比例] [--once]`
+
+持续监控所有帐号的额度：探测结果有变化才说话，当前帐号耗尽 / 需要重新登录 /
+剩余额度低于阈值时会给出提醒并响终端铃。Ctrl+C 停止。只读探测 + 缓存，不碰凭据。
+
+`--once` 只探测一轮就退出（不睡不循环），适合 cron / 计划任务；
+`--interval` 最小 30 秒（默认 300）；`--low` 默认 `0.1`（10%）。
+持续模式不支持 `--json`，单轮模式支持。
+
+```bash
+agys watch                       # 前台监控，Ctrl+C 停止
+agys watch --once                # 单轮：探测一遍、有异常就提醒
+agys watch --interval 60 --low 0.2
+```
+
 ### `ids`
 
 逐行输出所有 id 与别名，供 shell 补全与脚本使用。
@@ -154,14 +203,18 @@ EMAIL="$(agys whoami)"
 | 命令 | 说明 |
 |---|---|
 | `alias <帐号> <别名...> [--remove]` | 添加别名；`--remove` 改为删除这些别名。别名与其它帐号 id 冲突时拒绝 |
+| `tag [帐号] [标签...] [--remove]` | 不带参数时列出全部标签及其帐号；给帐号打标签 / `--remove` 移除。配合 `auto --tag <标签>` 在子集内选号 |
 | `rename <帐号> <新id>` | 重命名 id（同时迁移 profile 目录与 vault 索引） |
-| `info [帐号]` | 显示邮箱、身份、别名、创建/更新时间、凭据字节数、token 过期时间、是否为默认帐号；省略帐号时用当前帐号 |
+| `info [帐号]` | 显示邮箱、身份、别名、标签、创建/更新时间、凭据字节数、token 过期时间与剩余时长（临期会警告）、是否为默认帐号；省略帐号时用当前帐号 |
 | `default [帐号]` | 省略参数时查看默认帐号；指定时设置 |
 | `remove` / `rm <帐号> [--yes]` | 删除帐号；删除当前帐号会同时清除活跃凭据（登出）。需要确认，非交互环境须加 `--yes` |
 
 ```bash
 agys alias work primary
 agys alias work old-name --remove
+agys tag work daily
+agys tag work --remove daily
+agys auto --tag work            # 只在打了 work 标签的帐号里自动选号
 agys rename work work-2026
 agys info work
 agys default work
@@ -220,15 +273,17 @@ agys import backup.json --on-conflict ask --yes
 
 | 命令 | 说明 |
 |---|---|
-| `doctor` | 完整环境自检：平台、路径、加密方式、agy 版本、凭据库、布局、各 profile、运行中进程、警告 |
+| `doctor` | 完整环境自检：平台、路径、加密方式、agy 版本、凭据库、布局、各 profile（含 token 过期时间）、运行中进程、警告（含 token 临期 / 已过期预警） |
 | `doctor --fix` | 在自检后自动修复：迁移 v0.1 明文 profile、回滚未完成事务、修复 vault 索引（补入孤立 profile / 移除损坏项）、收紧目录权限 |
 | `layout` | 显示当前 agy 存储布局探测结果与缓存指纹的差异 |
 | `layout --discover` | 列出所有候选布局（凭据条目 / 状态文件 / token 路径），只读探测 |
 | `layout --adopt` | 自动发现并采纳可用布局；没有更合适的候选时把当前布局记为基准 |
 | `log [-n 数量]` | 查看 JSONL 审计日志（默认 20 条），只含元数据不含 token |
+| `stats` | 帐号使用统计：各帐号切换次数 / 失败次数 / 最后切换时间（见上文「日常」节） |
+| `watch [--once]` | 额度监控提醒（见上文「日常」节） |
 | `check` | 显示当前版本、查询仓库最新版本（离线时跳过）、快速自检提示数 |
 | `version` | 显示版本 |
-| `update [--check]` | 重新下载并运行安装脚本完成升级；`--check` 只查询最新版本 |
+| `update [--check]` | 重新下载并运行安装脚本完成升级；`--check` 只查询最新版本。**二进制安装的 Windows 用户会自动改用 `install.ps1`（不需要 bash / Python）**；其余情况用 `install.sh`（优先下载新二进制）。安装模式记录在 `~/.agys/install-mode` |
 
 ```bash
 agys doctor
@@ -343,6 +398,16 @@ agys completion powershell >> $PROFILE
 |---|---|---|
 | `AGYS_HOME` | `~/.agy-accounts` | vault 目录 |
 | `AGYS_GEMINI_HOME` | `~/.gemini` | agy 配置目录 |
+| `AGYS_INSTALL_DIR` | `~/.agys` | 安装目录（二进制 / 源码共用） |
+| `AGYS_SKIP_PATH=1` | — | 安装时不修改 PATH |
+| `AGYS_USE_SOURCE=1` | — | 强制源码安装（需要 Python 3.9+），不下载二进制 |
+| `AGYS_REQUIRE_BINARY=1` | — | 禁止回退源码：拿不到二进制就报错退出 |
+| `AGYS_BIN_URL` | Release latest | 自定义二进制下载地址（镜像 / 离线 `file://` 测试） |
+| `AGYS_BIN_SHA256` | `.sha256` 附件 | 指定二进制校验和，优先于自动下载校验文件 |
+| `AGYS_ASSET` | 自动推导 | 自定义产物名（覆盖 `agys-<os>-<arch>[.exe]`） |
+| `AGYS_BIN_REF` | `latest` | 固定下载某个 tag 的 Release 产物（如 `v0.7.0`） |
+| `AGYS_INSTALL_MODE` | `binary` | 安装模式覆盖（`binary` / `source`），主要供测试 |
+| `AGYS_EXPECT_SHA256` | — | 源码安装时校验 tarball 的 SHA-256 |
 | `AGYS_EXPORTS_DIR` | `$AGYS_HOME/exports` | 导出目录 |
 | `AGYS_CRED_TARGET` | `gemini:antigravity` | Windows 凭据条目名 |
 | `AGYS_CRED_USER` | `antigravity` | macOS Keychain account |
@@ -354,6 +419,8 @@ agys completion powershell >> $PROFILE
 | `AGYS_PROCESS_NAMES` | 平台相关 | 自定义进程名（逗号分隔；设为空串可禁用检测） |
 | `AGYS_PROXY` | — | 一次性覆盖代理 URL（优先于配置文件） |
 | `AGYS_NO_PROXY=1` | — | 本次不注入代理（临时直连） |
+| `AGYS_AUTO_FASTFAIL` | `20` | auto 判定「启动即失败」的秒数窗口（只影响提示措辞；换号与否由探测确认） |
+| `AGYS_AUTO_OFFLINE=1` | — | auto 只用额度缓存，不联网探测 |
 | `AGYS_GITHUB_OWNER` | `zhaoyewei` | `update` / `check` 使用的仓库 owner |
 | `AGYS_INSTALL_URL` | 官方 install.sh | 自定义升级脚本 URL |
 

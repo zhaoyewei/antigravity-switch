@@ -5,9 +5,9 @@
 """
 
 COMMANDS = (
-    "auto add list current use as switch run ls alias rename remove rm export "
-    "import log layout doctor version update init status whoami logout info "
-    "default completion backup restore check proxy history tui help ids"
+    "auto add list current use as switch run ls alias tag rename remove rm export "
+    "import log stats watch layout doctor version update init status whoami logout "
+    "info default prompt completion backup restore check proxy history tui help ids"
 ).split()
 
 TOPICS = {
@@ -24,6 +24,10 @@ TOPICS = {
   agys tui               交互式选择帐号并切换（use 省略帐号也会进入）
   agys history           查看会话历史（所有帐号共用同一份，不按帐号分区）
   agys info <帐号>       查看帐号详情与 token 有效期
+  agys stats             帐号使用统计（切换次数 / 最后活跃）
+  agys watch             持续监控额度，当前帐号异常时提醒（--once 单轮）
+  agys tag <帐号> <标签> 打标签；auto --tag <标签> 在子集内选号
+  agys prompt            输出当前帐号（shell 提示符集成）
   agys logout            登出但保留所有帐号
   agys doctor            环境自检；--fix 自动修复
   agys completion bash   生成 shell 补全脚本
@@ -36,6 +40,7 @@ TOPICS = {
   日常用        agys               （自动挑额度最多的帐号并启动）
   指定帐号      agys use work  /  agys as work -p "review this diff"
   看额度        agys auto --status
+  盯额度        agys watch         （当前帐号异常时提醒，Ctrl+C 停止）
   查看当前      agys status  /  agys whoami
   换机器        agys export → 新机 agys import xxx.json → agys use <id>
   整机备份      agys backup → ~/.agy-accounts/backups/…tar.gz
@@ -52,6 +57,7 @@ TOPICS = {
 更多：docs/TROUBLESHOOTING.md""",
     "env": """环境变量
   AGYS_HOME            vault 目录（默认 ~/.agy-accounts）
+  AGYS_INSTALL_DIR     安装目录（默认 ~/.agys；二进制与源码共用）
   AGYS_GEMINI_HOME     agy 配置目录（默认 ~/.gemini）
   AGYS_AGY_BIN         agy 二进制路径（也可写 "python stub.py" 做测试）
   AGYS_AGY_INSTALL_CMD 自定义 agy 安装命令
@@ -61,8 +67,11 @@ TOPICS = {
   AGYS_PROCESS_NAMES     自定义进程名列表
   AGYS_PROXY             一次性指定代理（覆盖配置文件），如 http://127.0.0.1:7890
   AGYS_NO_PROXY=1        本次不注入代理（临时直连）
-  AGYS_AUTO_FASTFAIL     auto 判定「启动即失败」的秒数（默认 20）
+  AGYS_AUTO_FASTFAIL     auto 判定「启动即失败」的秒数（默认 20，仅影响提示措辞）
   AGYS_AUTO_OFFLINE=1     auto 只用额度缓存，不联网探测
+  AGYS_USE_SOURCE=1      强制源码安装（需要 Python），不下载免 Python 二进制
+  AGYS_BIN_URL / AGYS_BIN_SHA256 / AGYS_ASSET  自定义二进制下载地址 / 校验和 / 产物名
+  AGYS_REQUIRE_BINARY=1  禁止回退源码，拿不到二进制就报错
   --json                结构化输出，便于脚本集成""",
     "auto": """auto 模式
   裸 `agys` 就是 auto：不指定帐号，按额度挑一个，切换后启动 agy。
@@ -76,14 +85,16 @@ TOPICS = {
   这类帐号用「健康探针」判定可用性，状态显示为「额度未知」。
 
   额度用光怎么办
-    agy 启动后很快非零退出时，会探测该帐号是否 429；
-    确认是额度问题就提醒一句，自动换下一个帐号重试。
+    agy 非零退出时（无论启动瞬间还是会话中途，只处理已退出的会话、
+    绝不中途打断）都会探测该帐号是否 429；确认是额度问题就提醒，
+    自动换下一个帐号重试；不是额度问题就原样返回真实错误。
 
   常用开关
     agys auto --status        看所有帐号的探测结果
     agys auto --dry-run       只说会选谁，不动任何东西
     agys auto --offline       只用 5 分钟内的缓存
     agys auto --no-launch     只切换，不启动 agy
+    agys auto --tag work      只在打了 work 标签的帐号里选
     agys auto -- -p "hi"      -- 之后的参数透传给 agy""",
     "security": """安全模型
   本地 vault 加密：Windows DPAPI / macOS·Linux SHAKE256+HMAC，密钥 0600

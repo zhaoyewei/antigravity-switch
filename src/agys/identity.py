@@ -6,8 +6,11 @@ token 被后台刷新后邮箱字符串可能变/为空，但 email / sub claim 
 from __future__ import annotations
 
 import base64
+import datetime
 import hashlib
 import json
+
+EXPIRY_KEYS = ("expiry", "expires_at", "expiry_date", "exp")
 
 
 def _jwt_claims(token: str):
@@ -87,3 +90,92 @@ def email_of(identity: str) -> str:
 
 def short(identity: str) -> str:
     return (identity or "").split(":", 1)[-1]
+
+
+# ---------------------------------------------------------------- token 过期
+
+def token_expiry(blob: bytes):
+    """尽力从 token blob 里解析过期时间，返回 ISO 字符串或 None。
+
+    agy 的 blob 里字段名不完全一致（expiry / expires_at / exp），
+    值可能是 epoch 秒/毫秒，也可能是 ISO 字符串，这里都尽力处理。
+    """
+    try:
+        data = json.loads(blob.decode("utf-8"))
+    except Exception:
+        return None
+
+    def walk(o, depth=0):
+        if depth > 6:
+            return None
+        if isinstance(o, dict):
+            for k, val in o.items():
+                if str(k).lower() in EXPIRY_KEYS:
+                    if val:
+                        return val
+                got = walk(val, depth + 1)
+                if got:
+                    return got
+        elif isinstance(o, list):
+            for val in o:
+                got = walk(val, depth + 1)
+                if got:
+                    return got
+        return None
+
+    raw = walk(data)
+    if raw is None:
+        return None
+    try:
+        if isinstance(raw, (int, float)) or str(raw).isdigit():
+            ts = float(raw)
+            if ts > 1e12:
+                ts /= 1000.0
+            return datetime.datetime.fromtimestamp(ts, datetime.timezone.utc).isoformat()
+        return str(raw)
+    except Exception:
+        return str(raw)
+
+
+def expiry_dt(raw):
+    """把 token_expiry 的返回值解析成 aware datetime；失败返回 None。"""
+    if not raw:
+        return None
+    s = str(raw).strip().replace("Z", "+00:00")
+    try:
+        dt = datetime.datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    return dt
+
+
+def expiry_age(raw, now=None):
+    """距过期还剩多少秒；已过期为负；解析失败返回 None。"""
+    dt = expiry_dt(raw)
+    if dt is None:
+        return None
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    return (dt - now).total_seconds()
+
+
+def expiry_human(raw, now=None):
+    """剩余时间的中文短描述：3 天 / 5 小时 / 已过期 2 天；未知返回空串。"""
+    sec = expiry_age(raw, now)
+    if sec is None:
+        return ""
+    if sec < 0:
+        return "已过期 " + _span(-sec)
+    return _span(sec)
+
+
+def _span(sec):
+    sec = int(abs(sec))
+    if sec >= 86400 * 2:
+        return f"{sec // 86400} 天"
+    if sec >= 3600:
+        return f"{sec // 3600} 小时"
+    if sec >= 60:
+        return f"{sec // 60} 分钟"
+    return f"{max(sec, 1)} 秒"

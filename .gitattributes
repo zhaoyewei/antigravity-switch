@@ -14,3 +14,5 @@ Makefile text eol=lf
 .gitignore text eol=lf
 *.cmd text eol=crlf
 *.bat text eol=crlf
+# PowerShell 5.1 需要 UTF-8 BOM 才能正确读取中文；CRLF 是 Windows 脚本惯例
+*.ps1 text eol=crlf

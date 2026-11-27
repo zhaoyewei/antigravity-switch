@@ -83,7 +83,7 @@ contains "rename 生效" "$($AGYS list)" "alice-main"
 contains "审计日志有记录" "$($AGYS log -n 50)" "switch"
 contains "layout 输出指纹" "$($AGYS layout)" "fingerprint"
 contains "doctor 输出加密方式" "$($AGYS doctor)" "加密"
-contains "version" "$($AGYS version)" "0.6.0"
+contains "version" "$($AGYS version)" "0.7.0"
 contains "--json doctor" "$($AGYS --json doctor)" '"ok": true'
 
 echo "== 5b. 扩展命令（status / whoami / ids / info / default / 别名 / help / 补全 / 自检修复 / 备份 / 登出） =="
@@ -208,6 +208,43 @@ contains "vault 当前=无" "$($AGYS current)" "当前帐号（vault）: 无"
 echo "== 9. 错误处理 =="
 contains "未知帐号报错" "$($AGYS use nobody 2>&1)" "找不到帐号"
 contains "导入不存在文件报错" "$($AGYS import "$T/nope.json" 2>&1)" "无法读取导入文件"
+
+echo "== 9b. 免 Python 二进制安装（离线，file:// 假二进制） =="
+sha_of() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
+  else shasum -a 256 "$1" | cut -d' ' -f1; fi
+}
+FAKE="$T/fake-agys"
+printf '#!/bin/sh\necho "agys 0.7.0 (fake binary)"\n' > "$FAKE"
+chmod +x "$FAKE"
+FAKE_URL="file://$FAKE"
+case "$FAKE" in [A-Za-z]:*) FAKE_URL="file:///$FAKE" ;; esac
+BIN_HOME="$T/bin-home"
+rm -rf "$BIN_HOME"
+OUT=$(cd "$T" && AGYS_INSTALL_DIR="$BIN_HOME" AGYS_SKIP_PATH=1 \
+  AGYS_BIN_URL="$FAKE_URL" AGYS_BIN_SHA256="$(sha_of "$FAKE")" \
+  AGYS_ASSET="agys-test" bash "$ROOT/install.sh" 2>&1)
+contains "下载二进制并校验 SHA-256" "$OUT" "SHA-256 校验通过"
+contains "二进制安装验证 version" "$OUT" "0.7.0"
+check "install-mode 标记为 binary" "$(cat "$BIN_HOME/install-mode")" "binary"
+check "可执行文件已就位" "$(test -x "$BIN_HOME/bin/agys" && echo yes || echo no)" "yes"
+contains "安装模式提示为 binary" "$OUT" "binary 模式"
+# 校验和不匹配时必须拒绝（强制二进制、不允许回退）
+if (cd "$T" && AGYS_INSTALL_DIR="$T/bin-home2" AGYS_SKIP_PATH=1 \
+    AGYS_BIN_URL="$FAKE_URL" AGYS_BIN_SHA256="deadbeef" AGYS_ASSET="agys-test" \
+    AGYS_REQUIRE_BINARY=1 bash "$ROOT/install.sh" >/dev/null 2>&1); then
+  FAIL=$((FAIL+1)); echo "  FAIL: SHA-256 不匹配应拒绝安装"
+else
+  PASS=$((PASS+1)); echo "  ok: SHA-256 不匹配不会误装"
+fi
+# 强制二进制模式且下载失败时必须明确失败（不悄悄装源码）
+if (cd "$T" && AGYS_INSTALL_DIR="$T/bin-home3" AGYS_SKIP_PATH=1 \
+    AGYS_BIN_URL="file:///nonexistent-agys-binary" AGYS_REQUIRE_BINARY=1 \
+    AGYS_ASSET="agys-test" bash "$ROOT/install.sh" >/dev/null 2>&1); then
+  FAIL=$((FAIL+1)); echo "  FAIL: AGYS_REQUIRE_BINARY=1 下载失败应报错"
+else
+  PASS=$((PASS+1)); echo "  ok: AGYS_REQUIRE_BINARY=1 下载失败会报错"
+fi
 
 echo
 echo "===== 结果: PASS=$PASS FAIL=$FAIL ====="

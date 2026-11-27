@@ -348,3 +348,124 @@ def test_pad_counts_wide_chars():
     assert pad("可用", 8) == "可用    "
     assert pad("ok", 4) == "ok  "
     assert pad("超出宽度", 2) == "超出宽度"      # 只补不砍
+
+
+# ---------------------------------------------------------------- 重置时间
+
+def test_reset_epoch_variants():
+    import datetime
+    iso = quota.reset_epoch("2026-12-01T00:00:00Z")
+    assert abs(iso - datetime.datetime(
+        2026, 12, 1, tzinfo=datetime.timezone.utc).timestamp()) < 1
+    assert quota.reset_epoch("1799000000") == 1799000000.0
+    assert quota.reset_epoch("1799000000000") == 1799000000.0
+    assert quota.reset_epoch("") is None
+    assert quota.reset_epoch("not-a-date") is None
+
+
+def test_fmt_reset_localizes():
+    import datetime
+    expected = datetime.datetime(2026, 12, 1, tzinfo=datetime.timezone.utc
+                                  ).astimezone().strftime("%m-%d %H:%M")
+    assert quota.fmt_reset("2026-12-01T00:00:00Z") == expected
+    assert quota.fmt_reset("garbage") == "garbage"
+    assert quota.fmt_reset("") == ""
+
+
+def test_probe_captures_reset_time(net):
+    net.route("retrieveUserQuota", 200, {"buckets": [
+        {"modelId": "gemini-2.5-pro", "remainingFraction": 0.0,
+         "resetTime": "2026-12-01T00:00:00Z"}]})
+    r = quota.probe("alice")
+    assert r["state"] == "exhausted"
+    assert r["reset"] == "2026-12-01T00:00:00Z"
+    assert "重置" in quota.label(r)
+    assert "12-01" in quota.label(r)
+
+
+def test_label_without_reset_keeps_plain():
+    assert "重置" not in quota.label(_report("a", "exhausted"))
+    assert "重置" not in quota.label(_report("a", "ok", remaining=0.5))
+
+
+def test_snapshot_caches_reset(sandbox, net):
+    v = {"accounts": {"alice": {"email": "a@gmail.com"}}}
+    net.route("retrieveUserQuota", 200, {"buckets": [
+        {"modelId": "m", "remainingFraction": 0.0,
+         "resetTime": "2026-12-01T00:00:00Z"}]})
+    rows = quota.snapshot(v, offline=False)
+    assert rows[0]["reset"] == "2026-12-01T00:00:00Z"
+    cached = quota.load_cache()["accounts"]["alice"]
+    assert cached["reset"] == "2026-12-01T00:00:00Z"
+    # 离线读缓存也应带出 reset
+    rows2 = quota.snapshot(v, offline=True)
+    assert rows2[0]["reset"] == "2026-12-01T00:00:00Z"
+
+
+# ---------------------------------------------------------------- 会话中途 429 兜底
+
+class _FakeTime:
+    """每次 monotonic() 前进一段，模拟长会话的运行耗时。"""
+
+    def __init__(self, step=300.0):
+        self.t = 1000.0
+        self.step = step
+
+    def monotonic(self):
+        self.t += self.step
+        return self.t
+
+
+def test_fallback_mid_session_exhausted_switches(sandbox, monkeypatch, capsys):
+    """长会话中额度耗尽：只要 agy 已退出就兜底换号（绝不中途打断）。"""
+    from agys.commands import switching
+    from agys.common import Reporter
+
+    switched, marks = [], []
+    monkeypatch.setattr(switching, "time", _FakeTime(300.0))
+    monkeypatch.setattr(switching, "switch_if_needed",
+                        lambda acc, *a: switched.append(acc))
+    monkeypatch.setattr(switching, "launch", lambda tail, rep: 1)
+    monkeypatch.setattr(switching.quota, "probe", lambda acc_id, cache=None: _report(
+        acc_id, "exhausted", 0.0, detail="429 配额耗尽"))
+    monkeypatch.setattr(switching.quota, "mark",
+                        lambda acc, state, detail: marks.append(acc))
+
+    rc = switching._run_with_fallback(["a", "b"], _fallback_args(), Reporter(False),
+                                      None, {"current": None}, [])
+    assert rc == 1
+    assert switched == ["b"], "长会话撞 429 也应换号"
+    assert marks == ["a", "b"]
+    err = capsys.readouterr().err
+    assert "300 秒后退出" in err and "额度已用尽" in err
+
+
+def test_fallback_mid_session_not_quota_only_hints(sandbox, monkeypatch, capsys):
+    """长会话失败但不是额度问题：不换号，只提示查看真实输出。"""
+    from agys.commands import switching
+    from agys.common import Reporter
+
+    monkeypatch.setattr(switching, "time", _FakeTime(300.0))
+    monkeypatch.setattr(switching, "switch_if_needed",
+                        lambda acc, *a: pytest.fail("非额度问题不该换号"))
+    monkeypatch.setattr(switching, "launch", lambda tail, rep: 3)
+    monkeypatch.setattr(switching.quota, "probe",
+                        lambda acc_id, cache=None: _report(acc_id, "error"))
+
+    rc = switching._run_with_fallback(["a", "b"], _fallback_args(), Reporter(False),
+                                      None, {"current": None}, [])
+    assert rc == 3
+    err = capsys.readouterr().err
+    assert "不是额度问题" in err
+
+
+def test_as_post_launch_check_warns(sandbox, monkeypatch, capsys):
+    from agys.commands import switching
+    from agys.common import Reporter
+
+    monkeypatch.setattr(switching, "_probe_after_failure",
+                        lambda acc, rep: _report(acc, "exhausted", 0.0))
+    monkeypatch.setattr(switching.quota, "mark", lambda *a: None)
+    switching._post_launch_check("alice", Reporter(False))
+    err = capsys.readouterr().err
+    assert "额度已用尽" in err and "运行 agys" in err

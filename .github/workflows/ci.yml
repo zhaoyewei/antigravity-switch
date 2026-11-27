@@ -26,6 +26,24 @@ jobs:
       - name: Compile check
         run: python -m compileall -q src/agys
 
+      - name: Installer scripts syntax check
+        shell: bash
+        run: |
+          bash -n install.sh uninstall.sh
+          echo "shell syntax OK"
+
+      - name: PowerShell installer syntax check
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          foreach ($f in @('install.ps1','uninstall.ps1')) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $f).Path, [ref]$null, [ref]$errors) | Out-Null
+            if ($errors) { throw "$f : $($errors -join '; ')" }
+            Write-Host "$f OK"
+          }
+
       - name: Unit tests
         run: pytest -q
 

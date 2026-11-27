@@ -1,8 +1,9 @@
 """切换类命令：use / tui / as / auto。
 
 `auto` 是裸 `agys` 的默认行为：不指定帐号，按额度与可用性挑一个，
-必要时切换并启动 agy；如果 agy 一启动就因为额度耗尽退出，提醒之后
-自动换下一个帐号重试。
+必要时切换并启动 agy；agy 非零退出时探测确认真实状态——是额度用尽
+（429）就提醒并自动换下一个帐号重试，无论发生在启动瞬间还是会话中途
+（绝不主动打断正在跑的会话，只在它已经退出之后处理）。
 """
 from __future__ import annotations
 
@@ -16,7 +17,8 @@ from ..runtime import (
     launch, pick_account, resolve_or_pick, switch_if_needed, switch_to,
 )
 
-# agy 在这段时间内非零退出，才认为是「启动即失败」（大概率额度或网络问题）
+# 短于该窗口的失败视为「启动即失败」（只影响提示措辞）；
+# 换号与否一律由探测确认，不再由窗口决定
 DEFAULT_FASTFAIL = 20.0
 # 用户主动取消不该被当成失败
 CANCEL_CODES = {130, 2}
@@ -50,6 +52,14 @@ def cmd_tui(args, rep, store, v):
 
 # ---------------------------------------------------------------- as
 
+def _post_launch_check(acc_id, rep):
+    """agy 退出非零后顺手确认是不是额度问题；是就提醒一句（`as` 用，不自动换号）。"""
+    report = _probe_after_failure(acc_id, rep)
+    if report and report.get("state") == "exhausted":
+        quota.mark(acc_id, "exhausted", "as 退出后探测确认")
+        rep.warn(f"帐号 '{acc_id}' 的额度已用尽；运行 agys 可自动换到其它帐号继续")
+
+
 def cmd_as(args, rep, store, v):
     tail = args.args_cmd or []
     if tail and tail[0] == "--":
@@ -58,7 +68,10 @@ def cmd_as(args, rep, store, v):
         raise AgysError("用法：agys as <帐号> [--] [agy 的参数...]")
     acc_id = resolve_or_pick(args, rep, store, v, args.name)
     switch_if_needed(acc_id, args, rep, store, v)
-    sys.exit(launch(tail, rep))
+    rc = launch(tail, rep)
+    if rc != 0 and rc not in CANCEL_CODES:
+        _post_launch_check(acc_id, rep)
+    sys.exit(rc)
 
 
 # ---------------------------------------------------------------- auto
@@ -90,8 +103,11 @@ def _probe_after_failure(acc_id, rep):
 
 
 def _run_with_fallback(order, args, rep, store, v, tail):
-    """按顺序启动 agy；启动即失败且确认额度用尽就换下一个。
+    """按顺序启动 agy；agy 非零退出且「确认」额度用尽就换下一个。
 
+    不再区分「启动即失败」与「会话中途退出」：只要 agy 已经退出
+    （绝不打断正在跑的会话），就探测确认真实状态——429 / 额度耗尽
+    才换号，其它错误原样返回，让用户看到真实输出。
     调用前 `cmd_auto` 已经切到 `order[0]`，所以首个帐号不再重复切换
     （否则会多打一行「已是当前帐号」）。
     """
@@ -104,15 +120,23 @@ def _run_with_fallback(order, args, rep, store, v, tail):
         started = time.monotonic()
         rc = launch(tail, rep)
         elapsed = time.monotonic() - started
-        if rc == 0 or rc in CANCEL_CODES or elapsed >= window:
+        if rc == 0 or rc in CANCEL_CODES:
             return rc
         report = _probe_after_failure(acc_id, rep)
         if report is None or report.get("state") != "exhausted":
             # 不是额度问题就别乱换号，原样返回让用户看到真实错误
+            if elapsed >= window:
+                rep.warn(f"agy 会话运行 {elapsed:.0f} 秒后退出（rc={rc}），"
+                         "探测确认不是额度问题，请查看上方 agy 的输出")
             return rc
         quota.mark(acc_id, "exhausted", f"agy {elapsed:.0f}s 后退出（rc={rc}）")
-        rep.warn(f"帐号 '{acc_id}' 的额度已用尽（agy 启动 {elapsed:.0f} 秒即退出），"
-                 f"自动切换到下一个帐号")
+        if idx + 1 >= len(order):
+            rep.warn(f"帐号 '{acc_id}' 的额度已用尽（agy 运行 {elapsed:.0f} 秒后退出），"
+                     "且没有更多帐号可换。额度重置或重新登录后再运行 agys；"
+                     "刚才会话仍可用 agys history 查看")
+            return rc
+        rep.warn(f"帐号 '{acc_id}' 的额度已用尽（agy 运行 {elapsed:.0f} 秒后退出），"
+                 f"自动切换到下一个帐号继续")
     return rc
 
 
@@ -126,8 +150,15 @@ def cmd_auto(args, rep, store, v):
         tail = tail[1:]
 
     offline = bool(getattr(args, "auto_offline", False)) or _env_flag("AGYS_AUTO_OFFLINE")
-    reports = quota.snapshot(v, offline=offline)
-    rep.set(accounts=reports)
+    tag = getattr(args, "auto_tag", None)
+    ids = None
+    if tag:
+        ids = [acc for acc, m in v["accounts"].items() if tag in (m.get("tags") or [])]
+        if not ids:
+            raise AgysError(f"没有帐号打了标签 '{tag}'。"
+                            "用 agys tag <帐号> <标签> 打标签，agys tag 看现有标签")
+    reports = quota.snapshot(v, offline=offline, ids=ids)
+    rep.set(accounts=reports, tag=tag or None)
 
     if getattr(args, "auto_status", False):
         _render_status(rep, reports, v)

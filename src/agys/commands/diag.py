@@ -1,12 +1,14 @@
-"""诊断类命令：doctor / layout / log / version / update / check。"""
+"""诊断类命令：doctor / layout / log / version / update / check / stats / watch。"""
 from __future__ import annotations
 
 import os
 import subprocess
 import tempfile
+import time
 
-from .. import APP, __version__, audit, doctor, journal, layout, proxy
-from ..common import AgysError
+from .. import (APP, __version__, audit, doctor, installer, journal, layout,
+                proxy, quota)
+from ..common import AgysError, pad
 from ..config import paths
 from ..crypto import secure_dir
 from ..vault import load_profile, migrate_profiles, save_vault
@@ -42,6 +44,7 @@ def _doctor_fix(rep, store, v):
                 v["accounts"][acc] = {
                     "id": acc, "email": prof.get("email") or "",
                     "aliases": prof.get("aliases") or [],
+                    "tags": prof.get("tags") or [],
                     "identity": prof.get("identity") or ""}
                 added += 1
             except Exception:
@@ -99,7 +102,7 @@ def cmd_layout(args, rep, store, v):
                     f"{cur['fingerprint']}")
 
 
-# ---------------------------------------------------------------- log / version
+# ---------------------------------------------------------------- log / stats / watch
 
 def cmd_log(args, rep, store, v):
     rows = audit.read(args.limit)
@@ -108,6 +111,132 @@ def cmd_log(args, rep, store, v):
         rep.msg(f"{r['ts']}  {r['action']:<8} {r.get('from') or '-'} -> "
                 f"{r.get('to') or '-'}  {r['result']}"
                 + (f"  {r['detail']}" if r.get("detail") else ""))
+
+
+def cmd_stats(args, rep, store, v):
+    """各帐号使用统计：切换次数 / 失败次数 / 最后切换时间（来自审计日志，纯只读）。"""
+    stats = {}
+
+    def entry(acc):
+        return stats.setdefault(acc, {"id": acc, "switches": 0, "failures": 0,
+                                      "last_switch": "", "added": ""})
+
+    for r in audit.read(limit=10 ** 6):
+        action = r.get("action")
+        to = r.get("to")
+        if action == "add" and to:
+            e = entry(to)
+            e["added"] = e["added"] or r.get("ts") or ""
+        elif action == "switch" and to:
+            e = entry(to)
+            if r.get("result") == "ok":
+                e["switches"] += 1
+                e["last_switch"] = r.get("ts") or ""
+            else:
+                e["failures"] += 1
+
+    total = sum(e["switches"] for e in stats.values())
+    out = []
+    for acc in sorted(v["accounts"]):
+        e = stats.pop(acc, None) or {"id": acc, "switches": 0, "failures": 0,
+                                     "last_switch": "", "added": ""}
+        meta = v["accounts"][acc]
+        e.update({"email": meta.get("email") or "", "tags": meta.get("tags") or [],
+                  "current": v.get("current") == acc, "deleted": False})
+        out.append(e)
+    for acc in sorted(stats):          # 日志里有、vault 里已删除的帐号
+        e = stats[acc]
+        e.update({"email": "", "tags": [], "current": False, "deleted": True})
+        out.append(e)
+    rep.set(accounts=out, total_switches=total)
+    if not out:
+        rep.msg("还没有任何帐号。用 agys add 添加第一个。")
+        return
+    rep.msg(f"{APP}: 帐号使用统计（数据来自审计日志）")
+    rep.msg(f"  {'':2} {pad('ID', 18)} {pad('切换', 6)} {pad('失败', 6)} "
+            f"{pad('最后切换', 20)} 备注")
+    for e in out:
+        mark = "*" if e["current"] else " "
+        note = []
+        if e.get("deleted"):
+            note.append("已删除")
+        if e.get("tags"):
+            note.append(",".join(e["tags"]))
+        if e.get("added"):
+            note.append(f"添加于 {str(e['added'])[:10]}")
+        rep.msg(f"  {mark:2} {pad(e['id'], 18)} {pad(e['switches'], 6)} "
+                f"{pad(e['failures'], 6)} {pad(e['last_switch'] or '-', 20)} "
+                f"{' '.join(note)}")
+    rep.msg(f"  合计 {total} 次成功切换。注：统计只覆盖审计日志保留的部分，"
+            "更早的历史不回溯。")
+
+
+def cmd_watch(args, rep, store, v):
+    """持续监控帐号额度：状态有变、当前帐号将耗尽时提醒（含终端响铃）。
+
+    只读探测 + 额度缓存，不碰凭据。`--once` 单轮模式适合 cron / 计划任务。
+    """
+    if not v["accounts"]:
+        raise AgysError("还没有任何帐号。用 agys add 添加第一个。")
+    interval = max(30, int(getattr(args, "interval", 300)))
+    low = min(1.0, max(0.0, float(getattr(args, "low", 0.1))))
+    once = bool(getattr(args, "once", False))
+    if rep.as_json and not once:
+        raise AgysError("watch 持续模式不支持 --json（每轮都输出没有意义）；"
+                        "单轮监控用 agys watch --once --json")
+    rep.set(interval=interval, low=low, once=once)
+    rep.msg(f"{APP}: 开始监控 {len(v['accounts'])} 个帐号"
+            f"（每 {interval} 秒探测一次，Ctrl+C 停止；额度阈值 {low * 100:.0f}%）")
+    prev = {}
+    alerts = 0
+    try:
+        while True:
+            reports = quota.snapshot(v)
+            alerts += _watch_cycle(reports, v, low, prev, rep)
+            rep.set(last=reports, alerts=alerts)
+            if once:
+                break
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        pass
+    rep.msg(f"{APP}: 已停止监控（本次共 {alerts} 次提醒）")
+
+
+def _watch_cycle(reports, v, low, prev, rep):
+    """一轮探测：状态没变就不刷屏；异常与低额度提醒计入返回值。"""
+    alerts = 0
+    cur = v.get("current")
+    stamp = time.strftime("%H:%M:%S")
+    for r in reports:
+        rid, state = r["id"], r.get("state")
+        rem = r.get("remaining")
+        sig = (state, rem if isinstance(rem, (int, float)) else None)
+        old = prev.get(rid)
+        prev[rid] = sig
+        if old == sig:
+            continue
+        if state == "exhausted":
+            reset = quota.fmt_reset(r.get("reset")) if r.get("reset") else ""
+            extra = f"（{reset} 重置）" if reset else ""
+            rep.warn(f"[{stamp}] 帐号 '{rid}' 额度已用尽{extra}"
+                     + ("；这是当前帐号，运行 agys 自动换号" if rid == cur else ""))
+            alerts += 1
+        elif state == "auth":
+            rep.warn(f"[{stamp}] 帐号 '{rid}' 需要重新登录"
+                     f"（agys remove '{rid}' 后 agys add 重登）")
+            alerts += 1
+        elif state == "error":
+            rep.warn(f"[{stamp}] 帐号 '{rid}' 探测失败：{(r.get('detail') or '')[:60]}")
+            alerts += 1
+        elif cur == rid and isinstance(rem, (int, float)) and rem <= low:
+            rep.warn(f"[{stamp}] 当前帐号 '{rid}' 额度仅剩 {rem * 100:.0f}%"
+                     f"（低于 {low * 100:.0f}% 阈值），建议准备 agys 换号")
+            alerts += 1
+        else:
+            rep.msg(f"[{stamp}] '{rid}' {quota.describe(r)}")
+    if alerts:
+        rep.msg("\a")          # 终端响铃
+    return alerts
 
 
 def cmd_version(args, rep, store, v):
@@ -143,17 +272,26 @@ def cmd_update(args, rep, store, v):
         rep.msg(f"当前 {__version__}，仓库最新 {latest}")
         rep.set(current=__version__, latest=latest)
         return
-    url = os.environ.get("AGYS_INSTALL_URL") or _raw_url("install.sh")
+    # 二进制安装的 Windows 用户没有 bash / Python，改用 PowerShell 安装脚本；
+    # 其余情况沿用 install.sh（它本身会优先下载新二进制）。
+    mode = installer.read_mode()
+    script = installer.update_script(mode)
+    url = (os.environ.get("AGYS_INSTALL_URL")
+           or installer.installer_url(script, owner=_release_owner()))
     try:
         with proxy.urlopen(url, timeout=30) as r:
-            script = r.read()
+            script_body = r.read()
     except Exception as e:
         raise AgysError(f"下载安装脚本失败：{e}")
-    fd, tmp = tempfile.mkstemp(prefix="agys-install-", suffix=".sh")
+    is_ps = script.endswith(".ps1")
+    fd, tmp = tempfile.mkstemp(prefix="agys-install-",
+                               suffix=".ps1" if is_ps else ".sh")
     with os.fdopen(fd, "wb") as f:
-        f.write(script)
+        f.write(script_body)
+    cmd = (["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", tmp]
+           if is_ps else ["bash", tmp])
     try:
-        rc = subprocess.call(["bash", tmp], env=proxy.child_env())
+        rc = subprocess.call(cmd, env=proxy.child_env())
     finally:
         try:
             os.unlink(tmp)
@@ -161,8 +299,9 @@ def cmd_update(args, rep, store, v):
             pass
     if rc != 0:
         raise AgysError(f"安装脚本返回 {rc}")
-    rep.msg(f"{APP}: 已重新安装，请运行 agys version 确认版本")
-    rep.set(updated=True)
+    rep.msg(f"{APP}: 已重新安装（{mode or 'source'} / {script}），"
+            "请运行 agys version 确认版本")
+    rep.set(updated=True, mode=mode or "source", installer=script)
 
 
 def cmd_check(args, rep, store, v):

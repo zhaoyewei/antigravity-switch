@@ -84,7 +84,25 @@ def cmd_logout(args, rep, store, v):
         rep.set(logged_out=True)
 
 
-# ---------------------------------------------------------------- 补全 / 帮助
+# ---------------------------------------------------------------- 补全 / 帮助 / prompt
+
+def cmd_prompt(args, rep, store, v):
+    """输出当前帐号，供 shell 提示符集成（starlight / oh-my-posh / PS1 等）。
+
+    刻意只读 vault、不碰凭据库：提示符里每帧渲染都调用它，必须便宜且永不报错。
+    """
+    cur = v.get("current") or ""
+    email = (v["accounts"].get(cur, {}) or {}).get("email") or ""
+    fmt = (getattr(args, "fmt", None) or "{id}").strip() or "{id}"
+    try:
+        text = fmt.format(id=cur or "none", email=email or "none")
+    except (KeyError, IndexError, ValueError) as e:
+        raise AgysError(f"格式串 '{fmt}' 不合法：{e}（可用字段 {{id}} / {{email}}）")
+    rep.set(id=cur or None, email=email or None, text=text)
+    if rep.as_json:
+        return
+    print(text)
+
 
 def cmd_completion(args, rep, store, v):
     script = COMPLETION[args.shell]
