@@ -71,6 +71,11 @@ def profile_path(acc_id):
 
 
 def save_profile(acc_id, blob: bytes, ga, meta):
+    """把凭据**加密后的快照**写进 profile.json。
+
+    存的是内容本身（`seal(blob)`），不是路径或链接：调用方给的是什么字节就存什么，
+    之后源文件被删 / 被改都不会影响这里的副本；反之这里也不会回写源文件。
+    """
     p = paths()
     secure_dir(os.path.join(p.profiles, acc_id))
     ident = meta.get("identity") or identity.extract(blob, ga)

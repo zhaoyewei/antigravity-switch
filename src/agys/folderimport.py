@@ -17,7 +17,15 @@
    refresh_token 完全一致，只有过期时间的写法不同（epoch 毫秒 vs ISO 字符串）；
 3. **agys 自己的导出文件**：识别出来后不在这里处理，提示改用文件导入。
 
-本模块只读：不改源目录、不碰当前凭据，也不打印任何 token 值。
+**导入 = 一次性拷贝快照，不是链接**：这里只把凭据内容读进内存（返回 `blob` 字节），
+由 `vault.save_profile()` 加密后存成 `profiles/<id>/profile.json`。整个过程不建软链 /
+硬链、不给 agy 换数据目录、不引用源路径，因此：
+
+- 源目录只读且一次性：导入完就可以删掉 / 挪走，之后的切换与它无关；
+- 单向不同步：源目录里的 token 后续被刷新不会回灌到 vault；反过来 `agys use` 之后
+  agy 刷新的 token 会被回收进 vault 的 profile，也不会回写源目录；
+- 「等价」不等于「字节相同」：agy 原生 blob 原样透传，`oauth_creds.json` 是重建字段
+  （逐字段值等价，实测与凭据库里的真实 blob 全等，但文件字节不保证一致）。
 """
 from __future__ import annotations
 
@@ -230,7 +238,11 @@ def _empty_message(root: str, ga, export_path) -> str:
 
 
 def scan(path: str) -> FolderAccount:
-    """扫描文件夹，返回一个可直接入库的帐号。失败抛 FolderImportError。"""
+    """扫描文件夹，返回一个可直接入库的帐号。失败抛 FolderImportError。
+
+    只读：不写源目录、不建链接、不碰当前凭据；返回的 `blob` 是内容快照，
+    与源文件之后是否还存在无关。
+    """
     root = os.path.abspath(os.path.expanduser(path))
     if not os.path.isdir(root):
         raise FolderImportError(f"不是文件夹：{path}")

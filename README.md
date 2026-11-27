@@ -117,6 +117,9 @@ agys import ~/.agy-account_userA --use              # 导入并立即切换
 邮箱会从 `google_accounts.json` 或 `id_token` 里取。详见
 [docs/COMMANDS.md](docs/COMMANDS.md#-import-文件夹---name---dry-run---use---no-verify---on-conflict-)。
 
+导入是**拷贝快照**而非链接：源目录只读、导完即可删除，vault 里存的是加密后的内容副本，
+之后两边不自动同步（详见上面的命令参考）。
+
 ---
 
 ## 命令速查

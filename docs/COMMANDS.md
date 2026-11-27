@@ -263,6 +263,16 @@ agys import ~/.agy-account_userA --name userA --use # 导入并立即切过去
 所以把 `~/.gemini` 整份拷出来改名成 `~/.agy-account_userA` 就能直接导入；
 一个文件夹只导一个帐号，同目录里发现多份凭据时会提示未采用的是哪一份。
 
+#### 导入是「拷贝快照」，不是链接
+
+| 维度 | 行为 |
+|---|---|
+| 源目录 | **只读**，不改、不建符号链接 / 硬链接；导入完可以立刻删掉或挪走 |
+| 存进 vault 的东西 | 凭据**内容的加密副本**（`profiles/<id>/profile.json` 里的 `sealed_blob`），不含任何指向源目录的路径引用 |
+| 之后是否同步 | **单向、不自动同步**：源目录里的 token 被刷新不会回灌 vault；`agys use` 后 agy 刷新出的新 token 会回收进 vault 的 profile，也不会回写源目录 |
+| 字节是否一致 | `agy` 原生 blob 原样透传；`oauth_creds.json` 是重建字段，**逐字段值等价**（实测与凭据库里的真实 blob 全等），但文件字节不保证逐一相同 |
+| agy 会不会用那个目录 | 不会。每次 `use` 都是把 blob 写进 agy 正常的那一个凭据条目（Windows/macOS 凭据库 `gemini:antigravity`，Linux 令牌文件），源目录从不被当作 agy 的数据目录 |
+
 - `--name` 指定导入后的 id（缺省用邮箱局部名）
 - `--dry-run` 只输出扫描结果，不写任何东西
 - `--use` 导入后立即切换（会写凭据，因此受布局校验与进程守卫约束，可用 `--close-all` / `--no-guard`）

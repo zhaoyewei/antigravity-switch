@@ -198,7 +198,8 @@ def build_parser():
 
     sp = sub.add_parser("import", help="导入导出文件，或从 agy 用户文件夹导入已有登录态"
                                        "（后者不需要重新登录）")
-    sp.add_argument("path", help="agys 导出文件（*.json），或 agy 用户文件夹（免登录导入）")
+    sp.add_argument("path", help="agys 导出文件（*.json），或 agy 用户文件夹"
+                                "（免登录导入；拷贝快照，不改源目录）")
     sp.add_argument("--name", help="导入后的帐号 id（仅文件夹导入；缺省用邮箱局部名）")
     sp.add_argument("--dry-run", action="store_true",
                     help="只显示扫描到哪个凭据、会导入成什么，不写入任何东西")
