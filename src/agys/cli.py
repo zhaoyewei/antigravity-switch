@@ -27,7 +27,7 @@ from .vault import load_vault
 
 ALIASES = {"ls": "list", "switch": "use", "run": "as", "rm": "remove"}
 # 这些命令会写凭据，布局异常时必须拒绝执行
-STRICT = frozenset({"add", "use", "as", "tui", "auto"})
+STRICT = frozenset({"add", "use", "as", "tui", "auto", "import"})
 
 # `as` / `auto` 里，argparse REMAINDER 会吞掉 agys 自己的 flag，
 # 所以先把它们提到帐号名之前。
@@ -36,14 +36,15 @@ GUARD_FLAGS = {"--no-guard", "--close-all", "--yes", "--allow-layout-change"}
 AUTO_FLAGS = {"--status", "--dry-run", "--offline", "--no-launch", "--tag"}
 
 
-def _guard_flags(sp):
+def _guard_flags(sp, with_yes=True):
     g = sp.add_mutually_exclusive_group()
     g.add_argument("--no-guard", action="store_true",
                    help="不检测/不关闭运行中的 agy 进程（风险自负）")
     g.add_argument("--close-all", action="store_true",
                    help="自动关闭运行中的 agy 进程后再切换，切换完尽力重开")
-    sp.add_argument("--yes", action="store_true",
-                    help="跳过交互确认（配合 --close-all / remove）")
+    if with_yes:      # import 已有语义相近的 --yes，避免重复定义
+        sp.add_argument("--yes", action="store_true",
+                        help="跳过交互确认（配合 --close-all / remove）")
     sp.add_argument("--allow-layout-change", action="store_true",
                     help="跳过自动发现，直接把当前布局记为基准")
 
@@ -195,8 +196,13 @@ def build_parser():
     sp.add_argument("path", nargs="?", help="输出路径（缺省 ~/.agy-accounts/exports/）")
     sp.set_defaults(func=cmd_export)
 
-    sp = sub.add_parser("import", help="导入导出文件（不自动切换）")
-    sp.add_argument("path")
+    sp = sub.add_parser("import", help="导入导出文件，或从 agy 用户文件夹导入已有登录态"
+                                       "（后者不需要重新登录）")
+    sp.add_argument("path", help="agys 导出文件（*.json），或 agy 用户文件夹（免登录导入）")
+    sp.add_argument("--name", help="导入后的帐号 id（仅文件夹导入；缺省用邮箱局部名）")
+    sp.add_argument("--dry-run", action="store_true",
+                    help="只显示扫描到哪个凭据、会导入成什么，不写入任何东西")
+    sp.add_argument("--use", action="store_true", help="导入后立即切换到这个帐号")
     sp.add_argument("--no-verify", action="store_true", help="跳过校验和检查")
     sp.add_argument("--on-conflict", default="overwrite",
                     choices=("ask", "skip", "overwrite", "rename"),
@@ -204,6 +210,7 @@ def build_parser():
                          "overwrite 覆盖（默认）/ rename 换个 id 并存")
     sp.add_argument("--yes", action="store_true",
                     help="配合 --on-conflict ask：冲突时一律覆盖")
+    _guard_flags(sp, with_yes=False)
     sp.set_defaults(func=cmd_import)
 
     sp = sub.add_parser("backup", help="备份整个 vault 为 tar.gz")
@@ -317,6 +324,10 @@ def _is_readonly(args):
     if args.cmd == "auto":
         return bool(getattr(args, "auto_status", False)
                     or getattr(args, "auto_dry_run", False))
+    if args.cmd == "import":
+        # 只有 --use 会写凭据；单纯导入只动 vault
+        return not (getattr(args, "use", False)
+                    and not getattr(args, "dry_run", False))
     return False
 
 

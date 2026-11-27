@@ -290,6 +290,40 @@ check "卸载后 ~/.bash_profile 已无 agys 配置" "$(blk_count "$RC_HOME/.bas
 check "卸载后 ~/.profile 已无 agys 配置" "$(blk_count "$RC_HOME2/.profile")" "0"
 contains "卸载保留用户原有行" "$(cat "$RC_HOME2/.profile" 2>/dev/null)" "AGYS_TEST_PROFILE"
 
+echo "== 9d. 从 agy 用户文件夹导入（免重新登录） =="
+IMP="$T/home-import"
+IMP_DIR="$T/agy-user-imported"
+rm -rf "$IMP" "$IMP_DIR"
+mkdir -p "$IMP" "$IMP_DIR/antigravity-cli"
+"$PY" - "$IMP_DIR" <<'PYEOF'
+import base64, json, os, sys
+d = sys.argv[1]
+b = lambda o: base64.urlsafe_b64encode(json.dumps(o).encode()).decode().rstrip("=")
+jwt = b({"alg": "none"}) + "." + b({"email": "imported@example.com"}) + ".sig"
+json.dump({"active": "imported@example.com", "old": []},
+          open(os.path.join(d, "google_accounts.json"), "w"))
+# Gemini CLI 形态：只有 access/refresh/expiry_date + id_token（邮箱在 JWT 里）
+json.dump({"access_token": jwt, "refresh_token": "RT-IMPORTED", "token_type": "Bearer",
+           "expiry_date": 1790000000000, "id_token": jwt, "scope": "openid email"},
+          open(os.path.join(d, "oauth_creds.json"), "w"))
+PYEOF
+imp() { AGYS_HOME="$IMP" AGYS_MEMORY_FILE="$IMP/memory_credential.json" \
+        AGYS_GEMINI_HOME="$T/gemini-import" $AGYS "$@"; }
+imp_mem_blob() { "$PY" -c "import base64,json,sys; print(base64.b64decode(json.load(open(sys.argv[1]))['blob']).decode())" \
+        "$IMP/memory_credential.json" 2>/dev/null || echo ABSENT; }
+contains "dry-run 只报告不写入" "$(imp import "$IMP_DIR" --dry-run)" "将导入为"
+check "dry-run 后库里没有帐号" "$(imp list | grep -c imported || true)" "0"
+contains "文件夹导入成功" "$(imp import "$IMP_DIR" --name imported)" "已从文件夹导入帐号 'imported'"
+contains "从 id_token 取到邮箱" "$(imp list)" "imported@example.com"
+contains "提示需要手动切换" "$(imp import "$IMP_DIR" --name imported --on-conflict skip)" "skip"
+contains "use 后成为当前帐号" "$(imp use imported)" "已切换到 'imported'"
+contains "切换后活跃凭据是导入的那份（含 refresh token）" "$(imp_mem_blob)" "RT-IMPORTED"
+contains "oauth_creds 已换算成 agy 形态" "$(imp_mem_blob)" '"auth_method": "oauth"'
+check "二次导入同身份不产生重复帐号" "$(imp import "$IMP_DIR" --name imported2 >/dev/null && imp list | grep -c "imported")" "1"
+EMPTY_DIR="$T/agy-user-empty"; rm -rf "$EMPTY_DIR"; mkdir -p "$EMPTY_DIR"
+printf '{"theme":"dark"}' > "$EMPTY_DIR/settings.json"
+contains "空目录给出明确指引" "$(imp import "$EMPTY_DIR" 2>&1)" "没找到可用的 agy 登录凭据"
+
 echo
 echo "===== 结果: PASS=$PASS FAIL=$FAIL ====="
 rm -rf "$T"

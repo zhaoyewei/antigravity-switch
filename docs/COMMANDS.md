@@ -237,12 +237,39 @@ agys export /tmp/migration.json
 
 > 迁移完成后请删除导出文件；refresh token 会被 Google 轮换，两台机器同时使用同一份凭据会互相踢下线。
 
-### `import <文件> [--no-verify] [--on-conflict ...]`
+### `import <文件|文件夹> [--name] [--dry-run] [--use] [--no-verify] [--on-conflict ...]`
 
-导入导出文件，校验 SHA-256（可用 `--no-verify` 跳过），兼容 v0.1 格式。
-**导入不会自动切换**，需再执行 `agys use <id>`。
+导入。传 `*.json` 时按导出文件处理（校验 SHA-256，可用 `--no-verify` 跳过，兼容 v0.1 格式）；
+传**文件夹**时按「已有的 agy 用户目录」处理 —— **不需要重新走浏览器登录**。
 
-id 已存在时按 `--on-conflict` 处理：
+```bash
+agys import backup.json --on-conflict skip
+agys import backup.json --on-conflict ask --yes
+
+agys import ~/.agy-account_userA --dry-run          # 先看扫到哪个凭据、会导入成什么
+agys import ~/.agy-account_userA --name userA       # 导入（不切换）
+agys import ~/.agy-account_userA --name userA --use # 导入并立即切过去
+```
+
+**文件夹导入**只读扫描该目录（深度 ≤ 3，跳过 `cache/`、`logs/`、`bin/` 等），
+按内容识别凭据，不依赖文件名：
+
+| 形态 | 说明 |
+|---|---|
+| agy 原生凭据 | `{"auth_method":"oauth","token":{access_token,refresh_token,token_type,expiry}}`，即 Windows / macOS 凭据库里的形态，也是 Linux 的 `antigravity-cli/antigravity-oauth-token` 文件内容 |
+| Gemini CLI 凭据 | `oauth_creds.json`（顶层 `access_token` / `refresh_token` / `expiry_date`），会按字段换算成 agy 形态；两者实测只有过期时间写法不同（epoch 毫秒 → ISO） |
+| `google_accounts.json` | 只用来取邮箱与 active 显示，不算凭据来源；缺了就从 `id_token` 的 JWT 里取邮箱 |
+
+所以把 `~/.gemini` 整份拷出来改名成 `~/.agy-account_userA` 就能直接导入；
+一个文件夹只导一个帐号，同目录里发现多份凭据时会提示未采用的是哪一份。
+
+- `--name` 指定导入后的 id（缺省用邮箱局部名）
+- `--dry-run` 只输出扫描结果，不写任何东西
+- `--use` 导入后立即切换（会写凭据，因此受布局校验与进程守卫约束，可用 `--close-all` / `--no-guard`）
+- 同一身份（同邮箱 / 同 refresh token）再次导入时默认**更新已有帐号**，不会造出两个一样的号；
+  `--on-conflict rename` 才会并存
+
+id 已存在（或身份相同）时按 `--on-conflict` 处理：
 
 | 取值 | 行为 |
 |---|---|
@@ -251,10 +278,7 @@ id 已存在时按 `--on-conflict` 处理：
 | `rename` | 换个不冲突的 id 并存（`alice` → `alice-2` → `alice-3`…） |
 | `ask` | 逐个询问；非交互终端下会报错，可加 `--yes` 表示全部覆盖 |
 
-```bash
-agys import backup.json --on-conflict skip
-agys import backup.json --on-conflict ask --yes
-```
+> 导入（含文件夹导入）默认**不会自动切换**，需再执行 `agys use <id>` 或加 `--use`。
 
 ### `backup [路径]`
 

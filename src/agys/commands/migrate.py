@@ -1,4 +1,4 @@
-"""迁移类命令：export / import / backup / restore。"""
+"""迁移类命令：export / import（含 agy 用户文件夹）/ backup / restore。"""
 from __future__ import annotations
 
 import datetime
@@ -9,11 +9,14 @@ import tarfile
 import tempfile
 import time
 
-from .. import APP, audit, expimp, identity
+from .. import APP, audit, expimp, folderimport, identity
 from ..common import AgysError, SwitchLock, confirm
 from ..config import paths
 from ..crypto import secure_dir
-from ..vault import save_profile, save_vault, slugify
+from ..runtime import switch_to
+from ..vault import (
+    email_slug, find_by_identity, save_profile, save_vault, slugify,
+)
 
 
 # ---------------------------------------------------------------- export
@@ -54,7 +57,93 @@ def _ask_conflict(acc_id, incoming, v, args):
     return answer.strip().lower() in ("y", "yes")
 
 
+def _folder_dry_run(args, rep, found, acc_id, email, existing, policy):
+    expiry = identity.token_expiry(found.blob)
+    rep.msg(f"{APP}: 扫描 {args.path}（{found.files_seen} 个文件）")
+    rep.msg(f"  凭据来源  {found.source}")
+    rep.msg(f"  形态      {found.kind_label}")
+    rep.msg(f"  邮箱      {email or '-'}")
+    rep.msg(f"  身份      {found.identity}")
+    rep.msg(f"  过期时间  {expiry or '未标注'}")
+    if existing:
+        rep.msg(f"  将写入    已有帐号 '{existing}'（同一身份，按 --on-conflict {policy} 处理）")
+    else:
+        rep.msg(f"  将导入为  '{acc_id}'")
+    for other in found.others:
+        rep.msg(f"  未采用    {other}")
+    rep.msg("  --dry-run：没有写入任何东西")
+    rep.set(dry_run=True, id=existing or acc_id, email=email, identity=found.identity,
+            source=found.source, kind=found.kind, exists=bool(existing))
+
+
+def _import_folder(args, rep, store, v):
+    """把 agy 用户文件夹里的登录态纳管成帐号（不重新走浏览器登录）。"""
+    try:
+        found = folderimport.scan(args.path)
+    except folderimport.FolderImportError as e:
+        raise AgysError(str(e))
+
+    email = found.email or identity.email_of(found.identity)
+    acc_id = slugify(getattr(args, "name", None) or email_slug(email)
+                     or identity.short(found.identity))
+    policy = getattr(args, "on_conflict", "overwrite")
+    # 同一份登录态可能已经用别的 id 在库里：先按身份找，避免出现两个相同的号
+    same_ident = find_by_identity(found.identity, v) if found.identity else None
+    existing = acc_id if acc_id in v["accounts"] else same_ident
+    if getattr(args, "dry_run", False):
+        _folder_dry_run(args, rep, found, acc_id, email, existing, policy)
+        return
+
+    target = acc_id
+    updated = False
+    with SwitchLock():
+        if existing:
+            if policy == "skip":
+                rep.msg(f"{APP}: 帐号 '{existing}' 已存在，按 skip 保留现有凭据")
+                rep.set(skipped=[existing], id=existing)
+                return
+            if policy == "ask" and not _ask_conflict(existing, {"email": email}, v, args):
+                rep.msg(f"{APP}: 已跳过 '{existing}'")
+                rep.set(skipped=[existing], id=existing)
+                return
+            if policy == "rename":
+                target = _unique_acc_id(acc_id, v["accounts"])
+            else:
+                target = existing
+                updated = True
+        meta = {"email": email, "aliases": [], "identity": found.identity}
+        save_profile(target, found.blob, found.ga, meta)
+        v["accounts"][target] = {"id": target, **meta}
+        save_vault(v)
+        audit.log("import", result="ok",
+                  detail=f"folder {args.path} -> {target} ({found.kind})")
+
+    rep.msg(f"{APP}: 已{'更新' if updated else '从文件夹导入'}帐号 '{target}'"
+            + (f"（{email}）" if email else "") + f"，凭据形态：{found.kind_label}"
+            + (f"，来源 {found.source}" if not updated else "（同一身份的凭据已刷新）"))
+    expiry = identity.token_expiry(found.blob)
+    age = identity.expiry_age(expiry)
+    if age is not None and age <= 0:
+        rep.warn(f"该凭据已过期（{identity.expiry_human(expiry)}）；切换后 agy 会用 "
+                 "refresh token 自动刷新，仍失败请重新 agys add 登录")
+    for other in found.others:
+        rep.msg(f"{APP}: 提示：同一个文件夹里还发现了 {other}，本次未采用"
+                "（一次只导一个帐号，需要的话把那个目录单独再导一次）")
+    rep.set(id=target, email=email, identity=found.identity, source=found.source,
+            kind=found.kind, updated=updated)
+
+    if getattr(args, "use", False):
+        with SwitchLock():
+            switch_to(target, args, rep, store, v)
+    else:
+        rep.msg(f"{APP}: 导入不会自动切换，需要时运行：agys use {target}"
+                "（或给 import 加 --use）")
+
+
 def cmd_import(args, rep, store, v):
+    """导入：文件 = agys 导出文件；文件夹 = 已有的 agy 用户目录（免登录）。"""
+    if os.path.isdir(os.path.expanduser(args.path)):
+        return _import_folder(args, rep, store, v)
     accounts, warns = expimp.read_import(args.path, verify=not args.no_verify)
     policy = getattr(args, "on_conflict", "overwrite")
     with SwitchLock():

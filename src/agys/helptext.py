@@ -23,6 +23,7 @@ TOPICS = {
   agys whoami            输出当前活跃邮箱（适合脚本）
   agys tui               交互式选择帐号并切换（use 省略帐号也会进入）
   agys history           查看会话历史（所有帐号共用同一份，不按帐号分区）
+  agys import <文件夹>   从已有 agy 用户目录导入登录态（免重新登录），--use 顺带切换
   agys info <帐号>       查看帐号详情与 token 有效期
   agys stats             帐号使用统计（切换次数 / 最后活跃）
   agys watch             持续监控额度，当前帐号异常时提醒（--once 单轮）
@@ -43,6 +44,7 @@ TOPICS = {
   盯额度        agys watch         （当前帐号异常时提醒，Ctrl+C 停止）
   查看当前      agys status  /  agys whoami
   换机器        agys export → 新机 agys import xxx.json → agys use <id>
+  导入旧号      agys import ~/.agy-account_userA --use   （免浏览器登录）
   整机备份      agys backup → ~/.agy-accounts/backups/…tar.gz
   升级          agys update  /  agys check""",
     "troubleshooting": """排障

@@ -73,12 +73,34 @@
 - 集成测试新增「9c. 安装后 shell 启动文件」12 项：登录 / 非登录 shell 真的能解析到
   `agys`、重复安装不堆叠、尊重已有的 `~/.profile`、卸载后清理干净且保留用户原有行
 
+**从 agy 用户文件夹导入（免重新登录）**
+- `agys import <文件夹>` 现在也能用：把某个帐号用过的 agy 数据目录整份拷出来
+  （例如 `~/.gemini` 改名成 `~/.agy-account_userA`），一条命令纳管，不再走浏览器登录
+- 只读扫描该目录（深度 ≤ 3，跳过 `cache/`、`logs/`、`bin/` 等），**按内容识别**凭据、
+  不依赖文件名，支持三种形态：agy 原生 blob（`{"auth_method":"oauth","token":{…}}`，
+  即 Windows/macOS 凭据库与 Linux 令牌文件的形态）、Gemini CLI 的 `oauth_creds.json`
+  （字段换算成 agy 形态：`expiry_date` 毫秒 → agy 的 ISO 写法）、以及顺带识别
+  `google_accounts.json` 提供邮箱 / active 显示
+- 邮箱优先从 `google_accounts.json` 取，缺了就从 `id_token` 的 JWT 载荷里取，
+  保证同一帐号重复导入能认出来（不会出现两个 id 指向同一身份）
+- 新增 `--name`（导入后的 id）、`--dry-run`（只报告扫到哪个文件、什么形态、会导入成什么）、
+  `--use`（导入后立即切换，受进程守卫与布局校验约束）
+- 同一身份再次导入默认**更新已有帐号**而不是新建；`--on-conflict rename` 才并存；
+  一个文件夹只导一个帐号，同目录里还有别的凭据时明确提示未采用的是哪一份
+- 找不到凭据时的报错直接列出「需要哪种文件、常见的三种位置」；文件夹里放的是
+  agys 导出文件时，提示改用 `agys import <那个文件>`
+- 新增 `folderimport.py`（纯逻辑，可单测）与 `identity.email_from_jwt()`
+
 **测试**
 - 单测新增 24 个用例：429 中途兜底（模拟长会话时钟）、resetTime 解析与展示、
   stats / prompt / tag / watch / 过期预警；另新增 `test_installer.py` 18 个用例
-  （产物命名 / URL / 模式标记 / update 分派）；单测 159 passed + 1 skipped，集成 88 项全通过
+  （产物命名 / URL / 模式标记 / update 分派）、`test_folder_import.py` 20 个用例
+  （三种凭据形态识别 / 过期时间换算 / 同身份去重 / 冲突策略 / dry-run）：
+  单测 179 passed + 1 skipped，集成 98 项全通过
 - 集成测试新增「9b. 免 Python 二进制安装」：用 `file://` 假二进制离线验证下载、SHA-256 校验、
   `install-mode` 标记与版本自检，以及校验失败 / 强制二进制失败的拒绝路径
+- 集成测试新增「9c. 安装后 shell 启动文件」与「9d. 从 agy 用户文件夹导入」：
+  后者用假的 `oauth_creds.json` 走完 导入 → 切换 → 活跃凭据校验 全链路
 - CI 增加 `bash -n` 安装脚本语法检查与 Windows PowerShell 解析器语法检查
 
 ## 0.6.0

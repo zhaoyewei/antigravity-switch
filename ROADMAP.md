@@ -12,7 +12,7 @@
 | 0.4.0 | 代理支持：`agys proxy set/show/clear/test`，只给 agys 启动的子进程注入代理变量，不改系统设置 |
 | 0.5.0 | 布局自动发现与自动兼容、`agys history`（跨帐号会话历史）、交互式 TUI、导入冲突策略、Linux 实机验证 |
 | 0.6.0 | auto 自动选号（裸 `agys`）、额度探测与「启动即失败」自动换号、`cli.py` 拆分重构 |
-| 0.7.0 | 429 兜底覆盖会话中途、订阅帐号重置时间（额度曲线）、`watch` 额度监控、`stats` 使用统计、`tag` 标签分组 + `auto --tag`、`prompt` 提示符集成、token 临期预警、**免 Python 单文件二进制安装**（PyInstaller + 多平台 Release + install.sh / install.ps1） |
+| 0.7.0 | 429 兜底覆盖会话中途、订阅帐号重置时间（额度曲线）、`watch` 额度监控、`stats` 使用统计、`tag` 标签分组 + `auto --tag`、`prompt` 提示符集成、token 临期预警、**免 Python 单文件二进制安装**（PyInstaller + 多平台 Release + install.sh / install.ps1）、**从 agy 用户文件夹免登录导入登录态** |
 
 ## 下一步（0.8 候选）
 

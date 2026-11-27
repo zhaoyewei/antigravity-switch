@@ -33,7 +33,7 @@ agy 因额度用尽退出时（无论启动瞬间还是会话中途撞 429），
 | 📶 **额度监控** | `agys watch` 持续探测，当前帐号耗尽 / 临期 / 需重登时提醒（含终端响铃）；`--once` 单轮适合定时任务 |
 | 📊 **使用统计** | `agys stats` 各帐号切换次数、失败次数与最后活跃时间（审计日志，纯只读） |
 | 🏷️ **标签分组** | `agys tag` 给帐号打标签，`agys auto --tag work` 只在子集内选号 |
-| 📦 **迁移友好** | `export` / `import`（SHA-256 校验和 + `skip/overwrite/rename/ask` 冲突策略）、`backup` / `restore` |
+| 📦 **迁移友好** | `export` / `import`（SHA-256 校验和 + `skip/overwrite/rename/ask` 冲突策略）、**从 agy 用户目录免登录导入**、`backup` / `restore` |
 | 🗂️ **会话历史** | `agys history` 列出/搜索/导出 agy 会话历史；agy 本地历史本就不按帐号分区，所有帐号天然共用 |
 | ⌨️ **交互式 TUI** | `agys tui`（或 `agys use` 省略帐号）方向键选择、回车切换，纯标准库实现 |
 | 💻 **提示符集成** | `agys prompt` 输出当前帐号，供 starship / oh-my-posh / PS1 显示 |
@@ -101,6 +101,22 @@ agys as work -p "review this diff"   # 切换并以该帐号启动 agy，参数�
 
 `agys init` 是可选的：直接 `agys add` 同样会先保存当前登录。
 
+### 从已有的 agy 目录导入（免重新登录）
+
+手里有一份某个帐号的 agy 数据目录（比如把 `~/.gemini` 整份拷出来改名成
+`~/.agy-account_userA`），可以直接纳管，不用再走一遍浏览器登录：
+
+```bash
+agys import ~/.agy-account_userA --dry-run          # 先确认扫到的是哪个号
+agys import ~/.agy-account_userA --use              # 导入并立即切换
+```
+
+目录里只要有含 refresh token 的文件就行 —— `oauth_creds.json`、
+`antigravity-cli/antigravity-oauth-token`、或凭据库导出的
+`{"auth_method":"oauth","token":{…}}` JSON 都能识别（按内容判断，不看文件名），
+邮箱会从 `google_accounts.json` 或 `id_token` 里取。详见
+[docs/COMMANDS.md](docs/COMMANDS.md#-import-文件夹---name---dry-run---use---no-verify---on-conflict-)。
+
 ---
 
 ## 命令速查
@@ -129,7 +145,8 @@ agys as work -p "review this diff"   # 切换并以该帐号启动 agy，参数�
 | | `default [帐号]` | 查看 / 设置默认帐号 |
 | | `remove` (`rm`) `<帐号>` | 删除帐号（删当前帐号会同时登出） |
 | 迁移 | `export [路径]` | 导出所有帐号（**明文**，迁移用途） |
-| | `import <文件>` | 导入（校验 SHA-256，不自动切换）；`--on-conflict ask\|skip\|overwrite\|rename` |
+| | `import <文件>` | 导入导出文件（校验 SHA-256，不自动切换）；`--on-conflict ask\|skip\|overwrite\|rename` |
+| | `import <文件夹>` | **从已有 agy 用户目录导入登录态，免重新登录**；`--dry-run` 先看、`--use` 导入并切换 |
 | | `backup [路径]` / `restore <文件>` | 完整备份 / 恢复 vault |
 | 诊断 | `doctor` / `doctor --fix` | 环境自检 / 自动修复 |
 | | `layout [--discover\|--adopt]` | 查看布局 / 列出候选布局 / 采纳可用布局 |
@@ -349,6 +366,7 @@ Antigravity 的 CLI、IDE、App、SDK 共享同一份本地登录态。`agys` �
 |---|---|
 | Windows 无法真正并发使用多个帐号 | 凭据是 OS 级全局唯一条目，当前 agy 版本没有文件化凭据开关；同一帐号多开窗口不受影响。Linux 上理论上可行，见 [ROADMAP.md](ROADMAP.md) |
 | `export` 是迁移而非复制 | refresh token 会被 Google 轮换，两台机器同时使用同一份凭据会互相踢下线。导入新机器后请在源机器 `agys remove` |
+| 文件夹导入同样是一份凭据 | 从 agy 用户目录导入等于拿到那个号的 refresh token：源副本请勿再被别的机器/其它 agys 使用，否则会互相把登录踢掉 |
 | IDE 可能仍显示旧邮箱 | CLI 与 IDE 共享凭据，但 IDE 窗口需执行 `Developer: Reload Window` 才会刷新显示 |
 | 会话正文无法逐字还原 | agy 把正文存成 protobuf，`agys history` 只能给出元信息与可读摘要 |
 | 免费帐号看不到额度百分比 | Google 对无订阅帐号不返回配额包（`403 SUBSCRIPTION_REQUIRED`），`auto` 只能判「可用 / 已用尽」，见[上文](#关于额度百分比) |

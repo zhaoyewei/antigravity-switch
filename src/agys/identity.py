@@ -88,6 +88,19 @@ def email_of(identity: str) -> str:
     return ""
 
 
+def email_from_jwt(token: str) -> str:
+    """从 JWT（id_token / access_token）里取 email claim；取不到返回空串。
+
+    导入外部 agy 用户文件夹时用：那边可能只有 oauth_creds.json（没有
+    google_accounts.json），邮箱只能从这个不透明 token 的 JWT 载荷里拿。
+    """
+    if not isinstance(token, str) or token.count(".") != 2:
+        return ""
+    claims = _jwt_claims(token)
+    email = claims.get("email")
+    return str(email).strip().lower() if email else ""
+
+
 def short(identity: str) -> str:
     return (identity or "").split(":", 1)[-1]
 
