@@ -57,17 +57,28 @@ def _subcommands(parser):
     return set()
 
 
+# 只属于顶层 parser 的 flag：出现时说明用户要看顶层信息，不能补 auto。
+# 历史上这里是 `agys --help` 变成 `agys auto --help` 的原因——只显示 auto 的参数，
+# 于是 import / export 这些命令「凭空消失」；`agys --version` 更会被 auto 判成非法参数。
+TOP_LEVEL_ONLY = ("-h", "--help", "--version")
+
+
 def _default_to_auto(argv, parser):
     """裸 `agys` 等同于 `agys auto`。
 
     只有「没写子命令」时才补 `auto`：如果出现了一个不认识的普通词（比如把
     `list` 打成 `lst`），保持原样交给 argparse 报错，而不是悄悄把它当成
     agy 的参数启动一个进程。
+
+    顶层的 `-h` / `--help` / `--version` 也必须原样交给顶层 parser —— 否则
+    `agys --help` 会被补成 `agys auto --help`，只显示 auto 自己的参数。
     """
     known = _subcommands(parser)
     for token in argv:
         if token == "--":
             break
+        if token in TOP_LEVEL_ONLY:
+            return argv          # 顶层帮助 / 版本号：不要补 auto
         if token in known:
             return argv
         if not token.startswith("-"):
@@ -106,10 +117,12 @@ def build_parser():
     p = argparse.ArgumentParser(
         prog=APP, description="Antigravity (agy) 多帐号切换器",
         epilog="直接运行 agys = 按额度自动挑帐号并启动 agy（同 agys auto）。"
-               "`--` 之后的参数全部透传给 agy。")
+               "`--` 之后的参数全部透传给 agy。"
+               "分组速查：agys help commands；完整参考：docs/COMMANDS.md。")
     p.add_argument("--json", action="store_true", help="以 JSON 输出（便于脚本集成）")
     p.add_argument("--version", action="version", version=f"{APP} {__version__}")
-    sub = p.add_subparsers(dest="cmd")
+    # metavar 给一个短名字：默认会把 40 个命令名全塞进 usage 行，长到看不清
+    sub = p.add_subparsers(dest="cmd", metavar="<命令>")
 
     # ---- 切换 ----
     sp = sub.add_parser("auto", help="按额度自动挑帐号并启动 agy（裸 agys 即此命令）")

@@ -94,12 +94,22 @@
   两边不自动同步（源目录的 token 刷新不回灌，`use` 后回收的 token 也不回写源目录）
 - 新增 `folderimport.py`（纯逻辑，可单测）与 `identity.email_from_jwt()`
 
+**修复：`agys --help` 只显示 auto 的参数**
+- 根因：`_default_to_auto()` 把「只有 flag、没有子命令」的调用补成 `agys auto …`，
+  于是 `agys --help` 变成 `agys auto --help` —— 帮助页只列 auto 自己的开关，
+  `import` / `export` 等命令看着像不存在；`agys --version` 更直接被 auto 判成
+  非法参数（文档里写了这个全局参数，实际用不了）
+- 现在顶层的 `-h` / `--help` / `--version` 一律原样交给顶层 parser；usage 行改用
+  `<命令>` 占位（之前把 40 个命令名全塞进 usage 行，长到没法读）
+- 单测补 3 项：顶层 flag 不被改写、`--help` 输出含完整命令清单且不是 auto 的帮助、
+  `--version` 正常输出
+
 **测试**
 - 单测新增 24 个用例：429 中途兜底（模拟长会话时钟）、resetTime 解析与展示、
   stats / prompt / tag / watch / 过期预警；另新增 `test_installer.py` 18 个用例
   （产物命名 / URL / 模式标记 / update 分派）、`test_folder_import.py` 20 个用例
   （三种凭据形态识别 / 过期时间换算 / 同身份去重 / 冲突策略 / dry-run）：
-  单测 179 passed + 1 skipped，集成 98 项全通过
+  单测 182 passed + 1 skipped，集成 98 项全通过
 - 集成测试新增「9b. 免 Python 二进制安装」：用 `file://` 假二进制离线验证下载、SHA-256 校验、
   `install-mode` 标记与版本自检，以及校验失败 / 强制二进制失败的拒绝路径
 - 集成测试新增「9c. 安装后 shell 启动文件」与「9d. 从 agy 用户文件夹导入」：

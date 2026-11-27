@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from agys.cli import main
 from agys.credentials import get_store
 from agys import expimp, journal, vault
@@ -140,6 +142,38 @@ def test_typo_is_not_silently_turned_into_agy_args():
     from agys.cli import build_parser, _default_to_auto
     p = build_parser()
     assert _default_to_auto(["lst"], p) == ["lst"]
+
+
+def test_top_level_flags_are_not_rewritten_to_auto():
+    """顶层 -h/--help/--version 不能被补成 `auto ...`（否则只看得到 auto 的参数）。"""
+    from agys.cli import build_parser, _default_to_auto
+    p = build_parser()
+    assert _default_to_auto(["-h"], p) == ["-h"]
+    assert _default_to_auto(["--help"], p) == ["--help"]
+    assert _default_to_auto(["--version"], p) == ["--version"]
+    assert _default_to_auto(["--json", "--help"], p) == ["--json", "--help"]
+    # 子命令自带的 --help 不受影响（首个词就是已知命令）
+    assert _default_to_auto(["import", "--help"], p) == ["import", "--help"]
+
+
+def test_help_lists_all_commands(capsys):
+    """`agys --help` 必须是顶层帮助：包含完整命令清单，而不是 auto 的参数页。"""
+    with pytest.raises(SystemExit) as e:
+        main(["--help"])
+    assert e.value.code == 0
+    out = capsys.readouterr().out
+    for cmd in ("auto", "add", "use", "import", "export", "backup",
+                "watch", "doctor", "history", "completion"):
+        assert cmd in out, cmd
+    assert "agys auto [-h]" not in out          # 不是 auto 子命令的帮助
+    assert "透传给 agy 的参数" not in out        # auto 的 args_cmd 说明也不该出现
+
+
+def test_version_flag(capsys):
+    with pytest.raises(SystemExit) as e:
+        main(["--version"])
+    assert e.value.code == 0
+    assert capsys.readouterr().out.strip().startswith("agys ")
 
 
 def test_bare_flags_reach_auto(sandbox, monkeypatch, capsys, blob_alice):
