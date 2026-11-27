@@ -78,20 +78,28 @@ try {
         if ($parts -notcontains $Bin) {
             $newPath = (($parts + $Bin) -join ';')
             [Environment]::SetEnvironmentVariable('PATH', $newPath, 'User')
-            Write-Host "==> 已把 $Bin 加入用户 PATH（重开终端后生效）"
+            Write-Host "==> 已把 $Bin 加入用户 PATH（cmd / 新窗口生效）"
         } else {
             Write-Host '==> 用户 PATH 已包含安装目录'
         }
+        # 当前会话也接上：通过 `irm ... | iex` 运行时设置的是本进程环境变量，
+        # 执行完立刻就能用 agys；用 .\install.ps1 运行时只影响子进程，下面会给出提示。
+        $env:PATH = "$Bin;$env:PATH"
     } else {
         Write-Host '==> 跳过 PATH 修改（AGYS_SKIP_PATH=1）'
     }
-    $env:PATH = "$Bin;$env:PATH"
 
     Write-Host '==> 验证安装'
     & $target version
     if ($LASTEXITCODE -ne 0) { throw "二进制自检失败（退出码 $LASTEXITCODE）" }
     Write-Host ''
     Write-Host "安装完成（$Mode 模式）。运行 agys doctor 自检，或直接 agys add 添加第一个帐号。"
+    if (-not $SkipPath -and -not (Get-Command 'agys.exe' -ErrorAction SilentlyContinue)) {
+        Write-Host ''
+        Write-Host '当前窗口立刻可用（复制这一行执行；只影响当前窗口）：'
+        Write-Host "    `$env:PATH = `"$Bin;`$env:PATH`""
+        Write-Host '新开一个终端则自动生效，无需再 source 任何文件。'
+    }
     Write-Host '升级：agys update    卸载：irm .../uninstall.ps1 | iex'
 }
 finally {

@@ -55,10 +55,28 @@
 - 新增 `installer.py`（产物命名 / Release URL / 安装模式标记 / 升级脚本选择），纯逻辑可单测；
   `install.sh` 的 SHA-256 计算改为 stdin 读取，规避 Git Bash Windows 临时路径转义前缀问题
 
+**安装后立刻可用（修 PATH 只写 `.bashrc` 的老问题）**
+- 以前只往 `~/.bashrc` 追加 PATH，但 Git Bash 与 macOS Terminal 起的是**登录** shell，
+  读的是 `~/.bash_profile` / `~/.bash_login` / `~/.profile`，永远读不到 `.bashrc`，
+  于是每开一个窗口都得手敲 `source ~/.bashrc`。现在按 bash 的加载顺序同时覆盖
+  非登录（`~/.bashrc`）与登录（上述三者，都没有则自建 `~/.bash_profile` 并级联
+  `.profile` / `.bashrc`）两条链，装了 zsh 再写 `~/.zshrc`
+- PATH 段改为带 `# >>> agys installer >>>` 标记的幂等块：同一份 rc 反复 source 不会把
+  PATH 越堆越长；卸载按标记精确摘除，不再用 `grep -v` 误删用户自己的行（也兼容清理
+  0.6 及更早版本追加的无标记 `export PATH=...`）
+- 安装结束打印一行 `export PATH="<安装目录>:$PATH"`，用于「已经开着的那个窗口」
+  （脚本是子进程，任何安装器都改不了父 shell 的环境变量）
+- `install.ps1`：`AGYS_SKIP_PATH=1` 时不再顺手改当前会话的 `$env:PATH`；通过 `irm | iex`
+  运行时当前 PowerShell 会话立即可用，作为脚本文件运行时给出同样的单行提示；
+  `uninstall.ps1` 也会清理 Git Bash / WSL 的启动文件
+- 新增 `AGYS_SKIP_WIN_PATH=1`：只跳过 Windows 注册表 PATH，仍写入 shell 启动文件（供测试）
+- 集成测试新增「9c. 安装后 shell 启动文件」12 项：登录 / 非登录 shell 真的能解析到
+  `agys`、重复安装不堆叠、尊重已有的 `~/.profile`、卸载后清理干净且保留用户原有行
+
 **测试**
 - 单测新增 24 个用例：429 中途兜底（模拟长会话时钟）、resetTime 解析与展示、
   stats / prompt / tag / watch / 过期预警；另新增 `test_installer.py` 18 个用例
-  （产物命名 / URL / 模式标记 / update 分派）；单测 159 passed + 1 skipped，集成 76 项全通过
+  （产物命名 / URL / 模式标记 / update 分派）；单测 159 passed + 1 skipped，集成 88 项全通过
 - 集成测试新增「9b. 免 Python 二进制安装」：用 `file://` 假二进制离线验证下载、SHA-256 校验、
   `install-mode` 标记与版本自检，以及校验失败 / 强制二进制失败的拒绝路径
 - CI 增加 `bash -n` 安装脚本语法检查与 Windows PowerShell 解析器语法检查

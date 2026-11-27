@@ -62,6 +62,15 @@ irm https://raw.githubusercontent.com/zhaoyewei/antigravity-switch/main/install.
 Linux(x86_64, arm64)。若某个平台暂无产物或下载失败，脚本会**回退到源码安装**（此时需要
 Python 3.9+，仅标准库）；也可用 `AGYS_USE_SOURCE=1` 主动选择源码安装。
 
+装完**新开一个终端就能直接用 `agys`**，不需要 `source ~/.bashrc`。脚本会把 PATH 写进你
+实际会读到的启动文件：bash 非登录 shell 的 `~/.bashrc`、登录 shell 的
+`~/.bash_profile` / `~/.bash_login` / `~/.profile`（Git Bash 与 macOS Terminal 起的是
+**登录** shell，只写 `.bashrc` 读不到，这正是以前要手动 source 的原因），装了 zsh 还有
+`~/.zshrc`；Windows 额外写用户注册表 PATH 供 cmd / PowerShell 使用。
+已经开着的那个窗口无法由脚本修改（子进程改不了父 shell 的环境变量），安装结束会打印一行
+`export PATH=...`，复制执行即可，下次开窗口就不用管了。写入的都是带 `# >>> agys installer >>>`
+标记的块，重复安装不会堆叠，卸载会精确摘掉。
+
 其他安装方式（都要求机器已有 Python）：
 
 ```bash
@@ -75,7 +84,7 @@ pipx install antigravity-switch              # PyPI 发布后
 [Antigravity 官方安装脚本](https://antigravity.google/docs/getting-started?tab=cli) 安装。
 可用 `AGYS_NO_AUTO_INSTALL=1` 关闭自动安装。
 
-常用安装环境变量：`AGYS_INSTALL_DIR`（安装目录）、`AGYS_SKIP_PATH=1`（不改 PATH）、
+常用安装环境变量：`AGYS_INSTALL_DIR`（安装目录）、`AGYS_SKIP_PATH=1`（不改 PATH / 不写启动文件）、
 `AGYS_BIN_URL` / `AGYS_BIN_SHA256` / `AGYS_ASSET`（自定义镜像）、
 `AGYS_BIN_REF`（固定到某个 tag）、`AGYS_REQUIRE_BINARY=1`（禁止回退源码）。
 完整清单见 [docs/COMMANDS.md](docs/COMMANDS.md#环境变量)。

@@ -20,6 +20,11 @@ not_contains() {
   if echo "$2" | grep -qF "$3"; then FAIL=$((FAIL+1)); echo "  FAIL: $1 (不应包含: $3)";
   else PASS=$((PASS+1)); echo "  ok: $1"; fi
 }
+# 安装脚本内部统一用 MSYS 风格路径（Git Bash 下是 /c/... 而不是 C:/...），
+# 断言 PATH 内容前先归一化
+posix_path() {
+  if command -v cygpath >/dev/null 2>&1; then cygpath -u "$1"; else printf '%s' "$1"; fi
+}
 
 export PYTHONPATH="$ROOT/src"
 export AGYS_HOME="$T/home"
@@ -245,6 +250,45 @@ if (cd "$T" && AGYS_INSTALL_DIR="$T/bin-home3" AGYS_SKIP_PATH=1 \
 else
   PASS=$((PASS+1)); echo "  ok: AGYS_REQUIRE_BINARY=1 下载失败会报错"
 fi
+
+echo "== 9c. 安装后 shell 启动文件（新终端直接可用，不需要 source） =="
+blk_count() { grep -cF '# >>> agys installer >>>' "$1" 2>/dev/null || true; }
+install_rc() {  # $1 = 假 HOME
+  (cd "$T" && HOME="$1" AGYS_INSTALL_DIR="$1/.agys" AGYS_SKIP_WIN_PATH=1 \
+    AGYS_BIN_URL="$FAKE_URL" AGYS_BIN_SHA256="$(sha_of "$FAKE")" AGYS_ASSET="agys-test" \
+    bash "$ROOT/install.sh" 2>&1)
+}
+RC_HOME="$T/rc-home"
+rm -rf "$RC_HOME"; mkdir -p "$RC_HOME"
+OUT=$(install_rc "$RC_HOME")
+check "写入 ~/.bashrc" "$(blk_count "$RC_HOME/.bashrc")" "1"
+check "自建 ~/.bash_profile（Git Bash / macOS 登录 shell 读它）" "$(blk_count "$RC_HOME/.bash_profile")" "1"
+contains "提示新终端会自动生效" "$OUT" "新开一个终端则自动生效"
+# 真正模拟登录 shell：Git Bash 窗口与 macOS Terminal 都走这条链（旧版只写 .bashrc 所以失效）
+LOGIN_PATH=$(HOME="$RC_HOME" bash --login -c 'printf "%s" "$PATH"' 2>/dev/null || true)
+contains "登录 shell 的 PATH 含安装目录" "$LOGIN_PATH" "$(posix_path "$RC_HOME/.agys/bin")"
+# 交互式非登录 shell（Linux 终端 / VS Code / WSL）读 ~/.bashrc
+NONLOGIN_PATH=$(HOME="$RC_HOME" bash -i -c 'printf "%s" "$PATH"' 2>/dev/null || true)
+contains "非登录交互 shell 的 PATH 含安装目录" "$NONLOGIN_PATH" "$(posix_path "$RC_HOME/.agys/bin")"
+# 重复安装不能把 PATH 行堆叠
+install_rc "$RC_HOME" >/dev/null
+check "重复安装不重复写入" "$(blk_count "$RC_HOME/.bashrc")" "1"
+# 已有 ~/.profile 但没有任何登录启动文件时，写进 ~/.profile（不新建 .bash_profile）
+RC_HOME2="$T/rc-home2"
+rm -rf "$RC_HOME2"; mkdir -p "$RC_HOME2"
+printf 'export AGYS_TEST_PROFILE=1\n' > "$RC_HOME2/.profile"
+install_rc "$RC_HOME2" >/dev/null
+check "尊重已有的 ~/.profile" "$(blk_count "$RC_HOME2/.profile")" "1"
+check "不额外创建 .bash_profile" "$(test -f "$RC_HOME2/.bash_profile" && echo yes || echo no)" "no"
+# 卸载要把标记块摘干净，且不能误删用户自己的行
+(cd "$T" && HOME="$RC_HOME" AGYS_INSTALL_DIR="$RC_HOME/.agys" AGYS_SKIP_WIN_PATH=1 \
+  bash "$ROOT/uninstall.sh" >/dev/null 2>&1)
+check "卸载后 ~/.bashrc 已无 agys 配置" "$(blk_count "$RC_HOME/.bashrc")" "0"
+check "卸载后 ~/.bash_profile 已无 agys 配置" "$(blk_count "$RC_HOME/.bash_profile")" "0"
+(cd "$T" && HOME="$RC_HOME2" AGYS_INSTALL_DIR="$RC_HOME2/.agys" AGYS_SKIP_WIN_PATH=1 \
+  bash "$ROOT/uninstall.sh" >/dev/null 2>&1)
+check "卸载后 ~/.profile 已无 agys 配置" "$(blk_count "$RC_HOME2/.profile")" "0"
+contains "卸载保留用户原有行" "$(cat "$RC_HOME2/.profile" 2>/dev/null)" "AGYS_TEST_PROFILE"
 
 echo
 echo "===== 结果: PASS=$PASS FAIL=$FAIL ====="

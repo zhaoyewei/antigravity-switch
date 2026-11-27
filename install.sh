@@ -203,29 +203,97 @@ EOF
   printf 'source\n' > "$DEST/install-mode"
 fi
 
-# ---------------------------------------------------------------- PATH（两种模式共用）
-if [ "${AGYS_SKIP_PATH:-0}" = "1" ]; then
-  echo "==> 跳过 PATH 修改（AGYS_SKIP_PATH=1）"
+# ---------------------------------------------------------------- PATH / shell 启动文件
+# 目标：装完就能用，不需要手动 source。分三层保障：
+#   1) shell 启动文件（bash 的「非登录」+「登录」两条链，以及 zsh）—— 新开终端直接可用；
+#   2) Windows 用户注册表 PATH —— cmd / PowerShell / 之后启动的进程也能找到；
+#   3) 脚本结束时打印一行 export —— 供「已经开着的当前窗口」立刻生效。
+# 旧版只写 ~/.bashrc：但 Git Bash 与 macOS Terminal 起的是登录 shell，读的是
+# ~/.bash_profile / ~/.profile，永远读不到 ~/.bashrc，于是每开一个窗口都得手敲
+# `source ~/.bashrc` —— 这就是本次修的问题。
+BLOCK_BEGIN="# >>> agys installer >>>"
+BLOCK_END="# <<< agys installer <<<"
+
+# 把 PATH 段写成一个带标记、且自身幂等的块：
+#   - 带标记 → 卸载时能精确摘掉，不会误删用户自己的行；
+#   - case 里先判断 → 同一份 rc 被反复 source 也不会把 PATH 越堆越长。
+rc_write_block() {  # $1 = 启动文件路径
+  local _rc="$1" _shown
+  case "$_rc" in "$HOME"/*) _shown="~/${_rc#"$HOME"/}" ;; *) _shown="$_rc" ;; esac
+  if [ -f "$_rc" ] && grep -qF "$BLOCK_BEGIN" "$_rc" 2>/dev/null; then
+    echo "==> $_shown 已包含 agys 的 PATH 配置"
+    return 0
+  fi
+  mkdir -p "$(dirname "$_rc")" 2>/dev/null || true
+  if [ -s "$_rc" ]; then printf '\n' >> "$_rc"; fi
+  {
+    printf '%s\n' "$BLOCK_BEGIN"
+    printf 'case ":$PATH:" in\n'
+    printf '  *":%s:"*) ;;\n' "$BIN"
+    printf '  *) PATH="%s:$PATH"; export PATH ;;\n' "$BIN"
+    printf 'esac\n'
+    printf '%s\n' "$BLOCK_END"
+  } >> "$_rc"
+  echo "==> 已把 $BIN 写入 $_shown"
+}
+
+# 登录 shell 按 bash 的固定顺序找启动文件，先命中者胜；都没有时返回 ~/.bash_profile
+bash_login_rc() {
+  local _f
+  for _f in "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"; do
+    if [ -f "$_f" ]; then printf '%s\n' "$_f"; return 0; fi
+  done
+  printf '%s\n' "$HOME/.bash_profile"
+}
+
+SKIP_RC="${AGYS_SKIP_PATH:-0}"
+SKIP_OS_PATH="${AGYS_SKIP_PATH:-0}"
+# 测试用：只跳过注册表这类系统级 PATH，仍验证启动文件逻辑
+if [ "${AGYS_SKIP_WIN_PATH:-0}" = "1" ]; then SKIP_OS_PATH=1; fi
+
+if [ "$SKIP_RC" = "1" ]; then
+  echo "==> 跳过 PATH / 启动文件修改（AGYS_SKIP_PATH=1）"
 else
-case ":$PATH:" in
-  *":$BIN:"*) echo "==> PATH 已包含 $BIN" ;;
-  *)
-    if [ "$IS_WINDOWS" = "1" ]; then
-      WINBIN="$(cygpath -w "$BIN")"
-      HAVE="$(powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('PATH','User')" 2>/dev/null || true)"
-      if [ -n "$HAVE" ] && echo "$HAVE" | grep -qiF "$WINBIN"; then
-        echo "==> Windows 用户 PATH 已包含 $WINBIN"
-      elif powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('PATH', [Environment]::GetEnvironmentVariable('PATH','User') + ';$WINBIN', 'User')" 2>/dev/null; then
-        echo "==> 已把 $WINBIN 加入 Windows 用户 PATH（重开终端后生效）"
-      else
-        echo "!! 无法自动修改 Windows PATH，请手动加入：$WINBIN"
-      fi
+  case ":$PATH:" in
+    *":$BIN:"*) echo "==> 当前 PATH 已包含 $BIN" ;;
+  esac
+
+  # bash 非登录交互 shell：Linux 桌面终端、WSL、VS Code 集成终端、tmux
+  rc_write_block "$HOME/.bashrc"
+
+  # bash 登录 shell：Git Bash 窗口、macOS Terminal、ssh 登录、`bash -lc`
+  LOGIN_RC="$(bash_login_rc)"
+  if [ ! -f "$LOGIN_RC" ]; then
+    # 没有任何登录启动文件时自建一个，并按 Git for Windows 的惯例级联 .profile / .bashrc，
+    # 免得以后用户往 ~/.bashrc 里加东西却在登录 shell 里失效。
+    printf '# 由 agys 安装脚本创建：登录 shell 先加载 ~/.profile 与 ~/.bashrc\n' > "$LOGIN_RC"
+    printf 'test -f "$HOME/.profile" && . "$HOME/.profile"\n' >> "$LOGIN_RC"
+    printf 'test -f "$HOME/.bashrc" && . "$HOME/.bashrc"\n' >> "$LOGIN_RC"
+    echo "==> 已创建 ${LOGIN_RC#"$HOME"/}（登录 shell 用）"
+  fi
+  rc_write_block "$LOGIN_RC"
+
+  # zsh：macOS 默认 shell，也常被 Linux 用户切换使用
+  HAS_ZSH=0
+  if [ -f "$HOME/.zshrc" ] || [ -d "$HOME/.oh-my-zsh" ]; then HAS_ZSH=1; fi
+  case "${SHELL:-}" in *zsh*) HAS_ZSH=1 ;; esac
+  if [ "$HAS_ZSH" = "1" ]; then
+    if [ ! -f "$HOME/.zshrc" ]; then : > "$HOME/.zshrc"; fi
+    rc_write_block "$HOME/.zshrc"
+  fi
+
+  # Windows 注册表 PATH（只负责 cmd / PowerShell / 新进程；Git Bash 靠上面的启动文件）
+  if [ "$IS_WINDOWS" = "1" ] && [ "$SKIP_OS_PATH" = "0" ]; then
+    WINBIN="$(cygpath -w "$BIN")"
+    HAVE="$(powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('PATH','User')" 2>/dev/null || true)"
+    if [ -n "$HAVE" ] && echo "$HAVE" | grep -qiF "$WINBIN"; then
+      echo "==> Windows 用户 PATH 已包含 $WINBIN"
+    elif powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('PATH', [Environment]::GetEnvironmentVariable('PATH','User') + ';$WINBIN', 'User')" 2>/dev/null; then
+      echo "==> 已把 $WINBIN 加入 Windows 用户 PATH（cmd / PowerShell 新窗口生效）"
     else
-      RC="$HOME/.bashrc"; touch "$RC"
-      grep -qF "$BIN" "$RC" 2>/dev/null || printf '\n# added by agys installer\nexport PATH="%s:$PATH"\n' "$BIN" >> "$RC"
-      echo "==> 已把 $BIN 写入 ~/.bashrc（新终端生效）"
-    fi ;;
-esac
+      echo "!! 无法自动修改 Windows PATH，请手动加入：$WINBIN"
+    fi
+  fi
 fi
 
 echo "==> 验证安装"
@@ -236,4 +304,17 @@ else
 fi
 echo
 echo "安装完成（$MODE 模式）。运行 agys doctor 自检，或直接 agys add 添加第一个帐号。"
+
+# 已经开着的这个窗口：脚本是子进程，改不了父 shell 的环境变量（任何安装器都做不到），
+# 所以只给出可以整行复制的最小命令。新开的窗口已经由启动文件接管，不需要这一步。
+case ":$PATH:" in
+  *":$BIN:"*) ;;
+  *)
+    echo
+    echo "当前窗口立刻可用（复制这一行执行；只影响当前窗口）："
+    echo "    export PATH=\"$BIN:\$PATH\""
+    echo "新开一个终端则自动生效，无需再 source 任何文件。"
+    ;;
+esac
+
 echo "升级：agys update    卸载：curl -fsSL .../uninstall.sh | bash"

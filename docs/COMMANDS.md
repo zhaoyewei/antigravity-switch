@@ -399,7 +399,8 @@ agys completion powershell >> $PROFILE
 | `AGYS_HOME` | `~/.agy-accounts` | vault 目录 |
 | `AGYS_GEMINI_HOME` | `~/.gemini` | agy 配置目录 |
 | `AGYS_INSTALL_DIR` | `~/.agys` | 安装目录（二进制 / 源码共用） |
-| `AGYS_SKIP_PATH=1` | — | 安装时不修改 PATH |
+| `AGYS_SKIP_PATH=1` | — | 安装时不改 PATH（也不写 shell 启动文件） |
+| `AGYS_SKIP_WIN_PATH=1` | — | 只跳过 Windows 注册表 PATH，仍写 shell 启动文件（测试用） |
 | `AGYS_USE_SOURCE=1` | — | 强制源码安装（需要 Python 3.9+），不下载二进制 |
 | `AGYS_REQUIRE_BINARY=1` | — | 禁止回退源码：拿不到二进制就报错退出 |
 | `AGYS_BIN_URL` | Release latest | 自定义二进制下载地址（镜像 / 离线 `file://` 测试） |

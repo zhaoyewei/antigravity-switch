@@ -22,6 +22,26 @@ if (-not (Test-Path $Dest)) {
     Write-Host "==> 已删除 $Dest"
 }
 
+# 摘掉安装器写进 shell 启动文件的 PATH 标记块（Git Bash / WSL 用户也覆盖到）
+$BlockBegin = '# >>> agys installer >>>'
+$BlockEnd = '# <<< agys installer <<<'
+foreach ($name in @('.bashrc', '.bash_profile', '.bash_login', '.profile', '.zshrc')) {
+    $rc = Join-Path $env:USERPROFILE $name
+    if (-not (Test-Path $rc)) { continue }
+    $text = [System.IO.File]::ReadAllLines($rc)
+    if (-not ($text -contains $BlockBegin)) { continue }
+    $keep = New-Object System.Collections.Generic.List[string]
+    $skip = $false
+    foreach ($line in $text) {
+        if ($line.Trim() -eq $BlockBegin) { $skip = $true; continue }
+        if ($line.Trim() -eq $BlockEnd) { $skip = $false; continue }
+        if (-not $skip) { $keep.Add($line) }
+    }
+    # 用 .NET 写入：PS 5.1 的 Set-Content -Encoding UTF8 会加 BOM，BOM 会让 bash 报第一行错
+    [System.IO.File]::WriteAllLines($rc, $keep, (New-Object System.Text.UTF8Encoding($false)))
+    Write-Host "==> 已清理 $name 中的 agys PATH 配置"
+}
+
 if ($env:AGYS_SKIP_PATH -ne '1') {
     $userPath = [Environment]::GetEnvironmentVariable('PATH', 'User')
     if ($userPath) {
